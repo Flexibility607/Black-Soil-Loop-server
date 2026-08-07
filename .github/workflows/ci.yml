@@ -50,9 +50,12 @@ jobs:
           -v worker_password='worker-test-password'
           -f deploy/postgres/01-create-roles.sql
       - name: Upgrade empty database twice
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres-test-password@127.0.0.1:5432/black_soil_loop
+          SERVICE_ROLE: migration
         run: |
-          SERVICE_ROLE=migration python -m alembic upgrade head
-          SERVICE_ROLE=migration python -m alembic upgrade head
+          python -m alembic upgrade head
+          python -m alembic upgrade head
       - name: Apply least-privilege grants
         run: psql -h 127.0.0.1 -U postgres -f deploy/postgres/02-grant-permissions.sql
       - run: python -m ruff check app tests scripts
