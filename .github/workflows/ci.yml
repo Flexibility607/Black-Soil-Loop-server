@@ -52,6 +52,7 @@ jobs:
       - name: Upgrade empty database twice
         env:
           DATABASE_URL: postgresql+psycopg://postgres:postgres-test-password@127.0.0.1:5432/black_soil_loop
+          WORKER_DATABASE_URL: postgresql+psycopg://postgres:postgres-test-password@127.0.0.1:5432/black_soil_loop
           SERVICE_ROLE: migration
         run: |
           python -m alembic upgrade head
