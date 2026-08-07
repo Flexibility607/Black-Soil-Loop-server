@@ -1,5 +1,5 @@
 {
-  "version": "miniapp-contract-v0.1.0",
+  "version": "miniapp-contract-v0.1.1",
   "required_operations": {
     "b01": {
       "/api/v1/public/dashboard/snapshot": ["get"],

@@ -1,6 +1,8 @@
 # CCRC 小程序 B02 对接包
 
-版本：`miniapp-contract-v0.1.0`。本目录面向 [X-BUGer/CCRC](https://github.com/X-BUGer/CCRC) 的后续改造开发者；本轮没有修改该仓库。
+版本：`miniapp-contract-v0.1.1`。本目录面向 [X-BUGer/CCRC](https://github.com/X-BUGer/CCRC) 的后续改造开发者；本轮没有修改该仓库。
+
+兼容性：相较 `miniapp-contract-v0.1.0` 没有破坏性 API 或 Schema 变更；本版本确认生产 HTTPS/WSS 域名及 TLS 已就绪。
 
 ## 内容
 
