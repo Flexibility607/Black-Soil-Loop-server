@@ -18,7 +18,7 @@ from app.domain.openai_layer import transcribe_audio
 from app.domain.services import add_audit, add_outbox, load_idempotent, save_idempotent
 from app.shared.auth_api import login_user, logout_user, refresh_user
 from app.shared.config import get_settings
-from app.shared.database import SessionLocal, get_db, init_database
+from app.shared.database import SessionLocal, engine, get_db, init_database
 from app.shared.dependencies import get_current_user, require_roles
 from app.shared.errors import BusinessError, version_conflict
 from app.shared.http import configure_app
@@ -51,7 +51,7 @@ from app.shared.schemas import (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if not get_settings().is_production:
+    if engine.dialect.name == "sqlite":
         init_database()
     yield
 
