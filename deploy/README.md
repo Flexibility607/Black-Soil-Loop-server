@@ -15,11 +15,14 @@
 
    脚本不会输出数据库、JWT 或设备密钥；演示管理员初始密码只写入 root 可读的 `/root/black-soil-loop-initial-credentials`。已配置环境会拒绝覆盖。
 
-5. 先启用 bootstrap Nginx 配置，签发两个独立证书：
+5. 先启用 bootstrap Nginx 配置，在阿里云申请并下载两个独立的 Nginx 证书，再安装：
 
    ```bash
-   certbot certonly --webroot -w /var/www/letsencrypt -d api.flexibility607.cn
-   certbot certonly --webroot -w /var/www/letsencrypt -d demo.flexibility607.cn
+   install -d -o root -g root -m 700 /etc/black-soil-loop/certs
+   install -o root -g root -m 644 api.flexibility607.cn.pem /etc/black-soil-loop/certs/
+   install -o root -g root -m 600 api.flexibility607.cn.key /etc/black-soil-loop/certs/
+   install -o root -g root -m 644 demo.flexibility607.cn.pem /etc/black-soil-loop/certs/
+   install -o root -g root -m 600 demo.flexibility607.cn.key /etc/black-soil-loop/certs/
    ```
 
 6. 将 `deploy/nginx/black-soil-loop.conf` 安装为 `/etc/nginx/sites-available/black-soil-loop`，执行 `nginx -t` 后 reload。博客域名必须同时完成冒烟检查。
@@ -50,4 +53,15 @@ systemctl list-timers 'blacksoil-*'
 curl --fail https://api.flexibility607.cn/health/b01
 curl --fail https://api.flexibility607.cn/health/b02
 nginx -t
+```
+
+## 阿里云证书更新
+
+`api.flexibility607.cn` 与 `demo.flexibility607.cn` 使用两张独立的阿里云 Nginx 证书。下载包必须同时包含 PEM 和 KEY，替换前先核对 SAN、有效期与公私钥配对；私钥权限保持 `600 root:root`。更新后依次执行 `nginx -t`、`systemctl reload nginx`，并复查 API、备用网页和博客 HTTPS。
+
+个人测试证书需要在到期前人工申请和替换。每周可执行以下命令检查剩余有效期：
+
+```bash
+openssl x509 -in /etc/black-soil-loop/certs/api.flexibility607.cn.pem -noout -checkend 1209600
+openssl x509 -in /etc/black-soil-loop/certs/demo.flexibility607.cn.pem -noout -checkend 1209600
 ```
