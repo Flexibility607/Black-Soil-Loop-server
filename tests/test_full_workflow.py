@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.shared.config import get_settings
 from app.worker import process_pending_once
 from tests.conftest import login
 
@@ -124,7 +125,7 @@ def test_web_to_mobile_receipt_inventory_alert_and_dashboard(b01_client, b02_cli
         ],
     }
     telemetry_headers = {
-        "X-Device-Key": "development-device-key-change-before-production",
+        "X-Device-Key": get_settings().device_api_key,
         "Idempotency-Key": "flow-telemetry",
     }
     telemetry = b02_client.post("/api/v1/device/telemetry", json=telemetry_payload, headers=telemetry_headers)
