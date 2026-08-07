@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.flexibility607.cn/schemas/realtime-event.schema.json",
+  "title": "WSS 实时事件",
+  "type": "object",
+  "required": [
+    "cursor",
+    "event_id",
+    "topic",
+    "object_type",
+    "object_id",
+    "object_version",
+    "payload",
+    "created_at"
+  ],
+  "properties": {
+    "cursor": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "object_type": {
+      "type": "string"
+    },
+    "object_id": {
+      "type": "string"
+    },
+    "object_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "payload": {
+      "type": "object"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

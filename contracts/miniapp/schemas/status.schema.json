@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.flexibility607.cn/schemas/status.schema.json",
+  "$defs": {
+    "transport_status": {
+      "enum": [
+        "DRAFT",
+        "MATCHED",
+        "CONFIRMED",
+        "PUBLISHED",
+        "DRIVER_ACCEPTED",
+        "PICKED_UP",
+        "IN_TRANSIT",
+        "DELIVERED",
+        "STORE_SIGNED",
+        "COMPLETED",
+        "CANCELLED"
+      ]
+    },
+    "receipt_status": {
+      "enum": [
+        "FULL",
+        "PARTIAL",
+        "REJECTED"
+      ]
+    }
+  }
+}

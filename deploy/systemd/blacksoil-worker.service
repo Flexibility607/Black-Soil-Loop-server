@@ -1,0 +1,22 @@
+[Unit]
+Description=Black Soil Loop outbox and projection worker
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=blacksoil
+Group=blacksoil
+WorkingDirectory=/srv/black-soil-loop/current
+EnvironmentFile=/etc/black-soil-loop/backend.env
+Environment=SERVICE_ROLE=worker
+ExecStart=/srv/black-soil-loop/current/.venv/bin/python -m app.worker
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/black-soil-loop
+
+[Install]
+WantedBy=multi-user.target

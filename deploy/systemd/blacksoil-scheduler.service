@@ -1,0 +1,17 @@
+[Unit]
+Description=Black Soil Loop scheduled forecasts and maintenance
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=blacksoil
+Group=blacksoil
+WorkingDirectory=/srv/black-soil-loop/current
+EnvironmentFile=/etc/black-soil-loop/backend.env
+Environment=SERVICE_ROLE=worker
+ExecStart=/srv/black-soil-loop/current/.venv/bin/python -m app.scheduler
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/black-soil-loop

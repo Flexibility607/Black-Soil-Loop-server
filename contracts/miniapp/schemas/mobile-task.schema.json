@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.flexibility607.cn/schemas/mobile-task.schema.json",
+  "title": "移动端运输任务",
+  "type": "object",
+  "required": [
+    "id",
+    "task_no",
+    "status",
+    "temperature_zone",
+    "object_version",
+    "stops",
+    "route_label"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_no": {
+      "type": "string"
+    },
+    "source_order_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "vehicle_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "driver_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "$ref": "status.schema.json#/$defs/transport_status"
+    },
+    "temperature_zone": {
+      "enum": [
+        "AMBIENT",
+        "CHILLED",
+        "FROZEN"
+      ]
+    },
+    "total_weight_kg": {
+      "type": "number",
+      "minimum": 0
+    },
+    "total_volume_m3": {
+      "type": "number",
+      "minimum": 0
+    },
+    "planned_departure_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "object_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "route_label": {
+      "const": "经纬度估算路线"
+    },
+    "stops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "store_id",
+          "sequence_no",
+          "status",
+          "object_version",
+          "delivery_lines"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sequence_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "PLANNED",
+              "DELIVERED",
+              "SIGNED"
+            ]
+          },
+          "object_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "delivery_lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "order_ids",
+                "product_id",
+                "expected_quantity",
+                "unit"
+              ],
+              "properties": {
+                "order_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "product_id": {
+                  "type": "string"
+                },
+                "expected_quantity": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "unit": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

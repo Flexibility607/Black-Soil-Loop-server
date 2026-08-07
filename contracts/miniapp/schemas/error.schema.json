@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.flexibility607.cn/schemas/error.schema.json",
+  "title": "统一错误响应",
+  "type": "object",
+  "required": [
+    "code",
+    "message",
+    "details",
+    "trace_id"
+  ],
+  "properties": {
+    "code": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "details": {
+      "type": "object"
+    },
+    "trace_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

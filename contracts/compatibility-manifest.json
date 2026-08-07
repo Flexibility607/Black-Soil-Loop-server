@@ -1,0 +1,33 @@
+{
+  "version": "miniapp-contract-v0.1.0",
+  "required_operations": {
+    "b01": {
+      "/api/v1/public/dashboard/snapshot": ["get"],
+      "/api/v1/dashboard/events": ["get"],
+      "/api/v1/web/algorithms/carpool/preview": ["post"],
+      "/api/v1/web/transport/plans/{plan_id}/cancel": ["post"]
+    },
+    "b02": {
+      "/api/v1/mobile/auth/wechat": ["post"],
+      "/api/v1/mobile/tasks": ["get"],
+      "/api/v1/mobile/tasks/{task_id}/actions": ["post"],
+      "/api/v1/mobile/tasks/{task_id}/locations": ["post"],
+      "/api/v1/mobile/tasks/{task_id}/exceptions": ["post"],
+      "/api/v1/mobile/tasks/{task_id}/receipts": ["post"],
+      "/api/v1/mobile/inventory": ["get"],
+      "/api/v1/mobile/stockouts": ["post"],
+      "/api/v1/mobile/daily-reports": ["post"],
+      "/api/v1/mobile/uploads": ["post"],
+      "/api/v1/device/telemetry": ["post"]
+    }
+  },
+  "required_b02_schemas": [
+    "TaskActionRequest",
+    "ReceiptCreate",
+    "DailyReportCreate",
+    "StockoutCreate",
+    "LocationCreate",
+    "TelemetryBatch",
+    "TaskExceptionCreate"
+  ]
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Black Soil Loop maintenance every day
+
+[Timer]
+OnCalendar=*-*-* 02:10:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=300
+Unit=blacksoil-scheduler.service
+
+[Install]
+WantedBy=timers.target

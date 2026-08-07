@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.flexibility607.cn/schemas/list-envelope.schema.json",
+  "type": "object",
+  "required": [
+    "items",
+    "page",
+    "page_size",
+    "total",
+    "trace_id",
+    "schema_version",
+    "generated_at"
+  ],
+  "properties": {
+    "items": {
+      "type": "array"
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

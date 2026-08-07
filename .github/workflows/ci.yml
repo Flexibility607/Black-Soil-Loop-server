@@ -1,0 +1,61 @@
+name: server-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres-test-password
+      ENVIRONMENT: test
+      SERVICE_ROLE: all
+      JWT_SECRET: test-secret-with-at-least-thirty-two-characters-2026
+      DEVICE_API_KEY: test-device-key-with-at-least-thirty-two-characters
+      TEST_DATABASE_URL: postgresql+psycopg://blacksoil_worker:worker-test-password@127.0.0.1:5432/black_soil_loop
+      DATABASE_URL: postgresql+psycopg://blacksoil_worker:worker-test-password@127.0.0.1:5432/black_soil_loop
+      B01_DATABASE_URL: postgresql+psycopg://blacksoil_b01:b01-test-password@127.0.0.1:5432/black_soil_loop
+      B02_DATABASE_URL: postgresql+psycopg://blacksoil_b02:b02-test-password@127.0.0.1:5432/black_soil_loop
+      WORKER_DATABASE_URL: postgresql+psycopg://blacksoil_worker:worker-test-password@127.0.0.1:5432/black_soil_loop
+      UPLOAD_DIR: ./test_uploads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Create PostgreSQL roles and database
+        run: >-
+          psql -h 127.0.0.1 -U postgres
+          -v b01_password='b01-test-password'
+          -v b02_password='b02-test-password'
+          -v worker_password='worker-test-password'
+          -f deploy/postgres/01-create-roles.sql
+      - name: Upgrade empty database twice
+        run: |
+          SERVICE_ROLE=migration python -m alembic upgrade head
+          SERVICE_ROLE=migration python -m alembic upgrade head
+      - name: Apply least-privilege grants
+        run: psql -h 127.0.0.1 -U postgres -f deploy/postgres/02-grant-permissions.sql
+      - run: python -m ruff check app tests scripts
+      - run: python -m scripts.export_contracts
+      - run: python -m scripts.check_contracts
+      - run: python -m pytest
