@@ -74,7 +74,7 @@ def aggregation_data(item: ProcurementAggregation, product: Product | None = Non
         "candidates": item.candidate_snapshot,
         "recommendation": item.recommendation_snapshot,
         "unit_conversion_warnings": item.unit_conversion_warnings,
-        "data_cutoff": item.data_cutoff.isoformat() if item.data_cutoff else None,
+        "data_cutoff": as_utc(item.data_cutoff).isoformat() if item.data_cutoff else None,
         "adjustment_reason": item.adjustment_reason,
         "confirmed_by": item.confirmed_by,
         "confirmed_at": item.confirmed_at.isoformat() if item.confirmed_at else None,

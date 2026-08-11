@@ -67,7 +67,7 @@ def forecast_projection_data(
         "method": item.method,
         "method_label": enum_label(FORECAST_METHOD_LABELS, item.method),
         "method_note": item.method_note,
-        "data_cutoff": item.data_cutoff.isoformat() if item.data_cutoff else None,
+        "data_cutoff": as_utc(item.data_cutoff).isoformat() if item.data_cutoff else None,
         "object_version": item.object_version,
         "generated_at": item.updated_at.isoformat(),
     }

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
+import logging
+import time
+from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -20,7 +23,6 @@ from app.domain.forecasts import (
     generate_next_week_forecasts,
     next_week_window,
 )
-from app.domain.openai_layer import transcribe_audio
 from app.domain.operations import (
     operations_summary,
     scoped_store_ids,
@@ -31,6 +33,8 @@ from app.domain.procurement import (
     procurement_cycle,
 )
 from app.domain.services import add_audit, add_outbox, load_idempotent, save_idempotent
+from app.domain.voice_limits import anonymous_subject_hash, claim_public_text_quota
+from app.domain.voice_service import cleanup_expired_voice_requests, transcribe_voice_request
 from app.shared.auth_api import login_user, logout_user, refresh_user
 from app.shared.config import get_settings
 from app.shared.database import SessionLocal, engine, get_db, init_database
@@ -91,13 +95,32 @@ from app.shared.schemas import (
     VersionedRequest,
     WarehousePoolConfirmRequest,
 )
+from app.shared.security import as_utc
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if engine.dialect.name == "sqlite":
         init_database()
-    yield
+
+    async def cleanup_voice_replays() -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                with SessionLocal() as cleanup_db:
+                    cleanup_expired_voice_requests(cleanup_db)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("voice replay cleanup failed: %s", type(exc).__name__)
+
+    cleanup_task = asyncio.create_task(cleanup_voice_replays())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = configure_app(
@@ -110,6 +133,7 @@ app = configure_app(
 )
 
 WEB = "/api/v1/web"
+logger = logging.getLogger(__name__)
 
 
 def _model_item(item: Any, fields: list[str]) -> dict[str, Any]:
@@ -1736,7 +1760,7 @@ def generate_next_week_forecast_batch(
         "unit": "按商品基础单位",
         "items": items,
         "aggregates": batch.aggregate_snapshot,
-        "data_cutoff": batch.data_cutoff.isoformat() if batch.data_cutoff else None,
+        "data_cutoff": as_utc(batch.data_cutoff).isoformat() if batch.data_cutoff else None,
         "changed_count": changed,
     }
     if changed:
@@ -1796,7 +1820,7 @@ def next_week_forecast_batch(
     ]
     return api_payload(
         request,
-        data_cutoff=batch.data_cutoff,
+        data_cutoff=as_utc(batch.data_cutoff) if batch.data_cutoff else None,
         batch={
             "id": batch.id,
             "forecast_start": batch.forecast_start.isoformat(),
@@ -1861,41 +1885,191 @@ def assistant_query(
     payload: AssistantQuery,
     request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> dict:
     if not get_settings().is_production:
-        refresh_dashboard_projection(db)
-    result = answer_data_question(db, payload.question, payload.preferred_chart)
+        refresh_dashboard_projection(db, payload.period)
+    assistant_started = time.perf_counter()
+    try:
+        result = answer_data_question(
+            db,
+            payload.question,
+            payload.preferred_chart,
+            payload.period,
+            allow_external_classifier=True,
+        )
+    except BusinessError as exc:
+        assistant_latency_ms = round((time.perf_counter() - assistant_started) * 1_000, 2)
+        try:
+            add_audit(
+                db,
+                request.state.trace_id,
+                user.id,
+                "ASSISTANT_QUERY",
+                "assistant_query",
+                request.state.trace_id,
+                None,
+                {
+                    "period": payload.period,
+                    "status": "FAILED",
+                    "error_code": exc.code,
+                    "assistant_latency_ms": assistant_latency_ms,
+                    "data_cutoff": None,
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
     cutoff = result.pop("data_cutoff")
-    return api_payload(request, data_cutoff=cutoff, **result)
+    assistant_latency_ms = round((time.perf_counter() - assistant_started) * 1_000, 2)
+    add_audit(
+        db,
+        request.state.trace_id,
+        user.id,
+        "ASSISTANT_QUERY",
+        "assistant_query",
+        request.state.trace_id,
+        None,
+        {
+            "intent": result["intent"],
+            "period": payload.period,
+            "mode": result["mode"],
+            "status": "COMPLETED",
+            "assistant_latency_ms": assistant_latency_ms,
+            "data_cutoff": cutoff.isoformat() if hasattr(cutoff, "isoformat") else cutoff,
+        },
+    )
+    db.commit()
+    response = api_payload(request, data_cutoff=cutoff, **result)
+    if cutoff is None:
+        response["data_cutoff"] = None
+        response["data_cutoff_note"] = "该查询没有可核验的业务数据截止时间"
+    return response
 
 
 @app.post("/api/v1/public/assistant/query", tags=["公开数据助手"])
 def public_assistant_query(payload: AssistantQuery, request: Request, db: Session = Depends(get_db)) -> dict:
+    subject_hash = None
+    if get_settings().assistant_public_db_quota_enabled:
+        subject_hash = anonymous_subject_hash(request)
+        claim_public_text_quota(db, subject_hash)
     if not get_settings().is_production:
-        refresh_dashboard_projection(db)
-    result = answer_data_question(db, payload.question, payload.preferred_chart)
+        refresh_dashboard_projection(db, payload.period)
+    assistant_started = time.perf_counter()
+    try:
+        result = answer_data_question(
+            db,
+            payload.question,
+            payload.preferred_chart,
+            payload.period,
+            allow_external_classifier=False,
+        )
+    except BusinessError as exc:
+        assistant_latency_ms = round((time.perf_counter() - assistant_started) * 1_000, 2)
+        try:
+            add_audit(
+                db,
+                request.state.trace_id,
+                None,
+                "PUBLIC_ASSISTANT_QUERY",
+                "assistant_query",
+                request.state.trace_id,
+                None,
+                {
+                    "subject_hash": subject_hash,
+                    "period": payload.period,
+                    "status": "FAILED",
+                    "error_code": exc.code,
+                    "assistant_latency_ms": assistant_latency_ms,
+                    "data_cutoff": None,
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
     cutoff = result.pop("data_cutoff")
-    return api_payload(request, data_cutoff=cutoff, **result)
+    assistant_latency_ms = round((time.perf_counter() - assistant_started) * 1_000, 2)
+    add_audit(
+        db,
+        request.state.trace_id,
+        None,
+        "PUBLIC_ASSISTANT_QUERY",
+        "assistant_query",
+        request.state.trace_id,
+        None,
+        {
+            "subject_hash": subject_hash,
+            "intent": result["intent"],
+            "period": payload.period,
+            "mode": result["mode"],
+            "status": "COMPLETED",
+            "assistant_latency_ms": assistant_latency_ms,
+            "data_cutoff": cutoff.isoformat() if hasattr(cutoff, "isoformat") else cutoff,
+        },
+    )
+    db.commit()
+    response = api_payload(request, data_cutoff=cutoff, **result)
+    if cutoff is None:
+        response["data_cutoff"] = None
+        response["data_cutoff_note"] = "该查询没有可核验的业务数据截止时间"
+    return response
 
 
 @app.post(f"{WEB}/assistant/transcriptions", tags=["数据助手"])
 async def assistant_transcription(
     request: Request,
     audio: UploadFile = File(...),
-    duration_seconds: float = Form(..., gt=0, le=30),
-    _: User = Depends(get_current_user),
+    duration_seconds: float | None = Form(default=None, gt=0, le=30),
+    client_request_id: str | None = Form(default=None),
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    allowed_types = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg"}
-    content_type = (audio.content_type or "").lower()
-    if content_type not in allowed_types:
-        raise BusinessError("AUDIO_TYPE_NOT_ALLOWED", "仅支持 WebM、MP4、MP3、WAV 或 OGG 录音", status_code=415)
-    maximum = min(get_settings().upload_max_bytes, 10 * 1024 * 1024)
+    if bool(getattr(audio.file, "_rolled", False)):
+        raise BusinessError("AUDIO_STORAGE_POLICY", "录音上传未满足内存处理策略", status_code=413)
+    maximum = get_settings().voice_max_bytes
     content = await audio.read(maximum + 1)
-    if len(content) > maximum:
-        raise BusinessError("AUDIO_TOO_LARGE", "录音文件不能超过 10 MB", status_code=413)
-    transcript = await transcribe_audio(audio.filename or "question.webm", content_type, content)
-    return api_payload(request, transcript=transcript, duration_seconds=duration_seconds)
+    request_id = client_request_id or idempotency_key or str(uuid4())
+    result = await transcribe_voice_request(
+        db,
+        request,
+        audio_bytes=content,
+        content_type=audio.content_type or "",
+        claimed_duration_seconds=duration_seconds,
+        client_request_id=request_id,
+        idempotency_key=idempotency_key or request_id,
+        public=False,
+        actor_user_id=user.id,
+    )
+    return api_payload(request, **result)
+
+
+@app.post("/api/v1/public/assistant/transcriptions", tags=["公开数据助手"])
+async def public_assistant_transcription(
+    request: Request,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    audio: UploadFile = File(...),
+    duration_seconds: float = Form(..., gt=0, le=30),
+    client_request_id: str = Form(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    if bool(getattr(audio.file, "_rolled", False)):
+        raise BusinessError("AUDIO_STORAGE_POLICY", "录音上传未满足内存处理策略", status_code=413)
+    maximum = get_settings().voice_max_bytes
+    content = await audio.read(maximum + 1)
+    result = await transcribe_voice_request(
+        db,
+        request,
+        audio_bytes=content,
+        content_type=audio.content_type or "",
+        claimed_duration_seconds=duration_seconds,
+        client_request_id=client_request_id,
+        idempotency_key=idempotency_key,
+        public=True,
+    )
+    return api_payload(request, **result)
 
 
 @app.get(f"{WEB}/dictionaries", tags=["公共约定"])

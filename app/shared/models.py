@@ -7,6 +7,7 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -808,6 +809,85 @@ class IdempotencyRecord(Base):
     state: Mapped[str] = mapped_column(String(20), default="PROCESSING", nullable=False, index=True)
     status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     response_body: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VoiceQuotaBucket(Base):
+    __tablename__ = "voice_quota_buckets"
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_hash",
+            "scope",
+            "window_started_at",
+            name="uq_b01_voice_quota_window",
+        ),
+        Index("ix_b01_voice_quota_scope_window", "scope", "window_started_at"),
+        CheckConstraint("window_seconds > 0", name="ck_b01_voice_quota_window_positive"),
+        CheckConstraint("request_count >= 0", name="ck_b01_voice_quota_count_nonnegative"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(40), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class VoiceConcurrencyLease(Base):
+    __tablename__ = "voice_concurrency_leases"
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_hash",
+            "client_request_id",
+            name="uq_b01_voice_lease_subject_request",
+        ),
+        Index("ix_b01_voice_lease_expires", "expires_at"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    client_request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class VoiceTranscriptionRequest(Base):
+    __tablename__ = "voice_transcription_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "request_scope",
+            "subject_hash",
+            "idempotency_key",
+            name="uq_b01_voice_transcription_subject_key",
+        ),
+        Index("ix_b01_voice_transcription_state_expiry", "state", "replay_expires_at"),
+        CheckConstraint(
+            "state IN ('PROCESSING', 'COMPLETED', 'FAILED')",
+            name="ck_b01_voice_transcription_state",
+        ),
+        CheckConstraint("duration_seconds > 0", name="ck_b01_voice_transcription_duration_positive"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    request_scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    client_request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), default="PROCESSING", nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    replay_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

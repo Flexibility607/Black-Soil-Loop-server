@@ -9,6 +9,7 @@ description = "Black Soil Loop B01/B02 services and shared PostgreSQL platform"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.14,<2",
+  "aliyun-python-sdk-core==2.15.1",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "PyJWT>=2.10,<3",

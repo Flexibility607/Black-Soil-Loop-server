@@ -8,7 +8,10 @@ os.environ["DATABASE_URL"] = os.environ.get(
 )
 os.environ["JWT_SECRET"] = "test-secret-with-at-least-thirty-two-characters-2026"
 os.environ["UPLOAD_DIR"] = "./test_uploads"
+os.environ["RATE_LIMIT_PER_MINUTE"] = "1000"
 os.environ["AUTH_RATE_LIMIT_PER_MINUTE"] = "1000"
+os.environ["VOICE_RATE_LIMIT_HMAC_SECRET"] = "test-voice-rate-limit-secret-with-thirty-two-chars"
+os.environ["ASSISTANT_PUBLIC_DB_QUOTA_ENABLED"] = "true"
 
 import pytest
 from fastapi.testclient import TestClient

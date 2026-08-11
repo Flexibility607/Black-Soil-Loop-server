@@ -2501,15 +2501,38 @@
         ],
         "summary": "Assistant Transcription",
         "operationId": "assistant_transcription_api_v1_web_assistant_transcriptions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/Body_assistant_transcription_api_v1_web_assistant_transcriptions_post"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2517,8 +2540,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Assistant Transcription Api V1 Web Assistant Transcriptions Post"
                 }
               }
@@ -2534,12 +2557,61 @@
               }
             }
           }
-        },
-        "security": [
+        }
+      }
+    },
+    "/api/v1/public/assistant/transcriptions": {
+      "post": {
+        "tags": [
+          "公开数据助手"
+        ],
+        "summary": "Public Assistant Transcription",
+        "operationId": "public_assistant_transcription_api_v1_public_assistant_transcriptions_post",
+        "parameters": [
           {
-            "HTTPBearer": []
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_public_assistant_transcription_api_v1_public_assistant_transcriptions_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Public Assistant Transcription Api V1 Public Assistant Transcriptions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/web/dictionaries": {
@@ -2657,6 +2729,16 @@
             ],
             "title": "Preferred Chart",
             "default": "auto"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "7d",
+              "30d",
+              "month"
+            ],
+            "title": "Period",
+            "default": "30d"
           }
         },
         "type": "object",
@@ -2673,18 +2755,61 @@
             "title": "Audio"
           },
           "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 30.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "client_request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_assistant_transcription_api_v1_web_assistant_transcriptions_post"
+      },
+      "Body_public_assistant_transcription_api_v1_public_assistant_transcriptions_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio"
+          },
+          "duration_seconds": {
             "type": "number",
             "maximum": 30.0,
             "exclusiveMinimum": 0.0,
             "title": "Duration Seconds"
+          },
+          "client_request_id": {
+            "type": "string",
+            "title": "Client Request Id"
           }
         },
         "type": "object",
         "required": [
           "audio",
-          "duration_seconds"
+          "duration_seconds",
+          "client_request_id"
         ],
-        "title": "Body_assistant_transcription_api_v1_web_assistant_transcriptions_post"
+        "title": "Body_public_assistant_transcription_api_v1_public_assistant_transcriptions_post"
       },
       "CancelRequest": {
         "properties": {

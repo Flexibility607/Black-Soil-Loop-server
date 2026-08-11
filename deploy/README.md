@@ -15,6 +15,8 @@
 
    脚本不会输出数据库、JWT 或设备密钥；演示管理员初始密码只写入 root 可读的 `/root/black-soil-loop-initial-credentials`。已配置环境会拒绝覆盖。
 
+   脚本同时生成独立的 `VOICE_RATE_LIMIT_HMAC_SECRET`，并以 `VOICE_ASSISTANT_ENABLED=false`、`VOICE_PUBLIC_ENABLED=false`、`ASSISTANT_PUBLIC_DB_QUOTA_ENABLED=false` 写入语音安全默认值。阿里云 AccessKey、Secret、AppKey 和热词 ID 保持空值，必须由管理员在受限环境文件中手工填写，脚本不会读取或输出这些凭据。
+
 5. 先启用 bootstrap Nginx 配置，在阿里云申请并下载两个独立的 Nginx 证书，再安装：
 
    ```bash
@@ -44,6 +46,21 @@ sudo deploy/deploy-web-release.sh <版本号> <web-dist.tar.gz>
 ```
 
 网页发布脚本会拒绝包含 `mock/` 或未指向 `https://api.flexibility607.cn/api/v1` 的制品；切换后通过本机 HTTPS 冒烟检查，失败时恢复上一软链接。
+
+## 语音问答受控启用
+
+语音发布必须按以下顺序执行，避免凭据或供应商故障影响现有大屏能力：
+
+1. 保持三个开关均为 `false`，先发布代码并执行 Alembic `20260811_0012` 迁移和数据库权限刷新。
+2. 在阿里云智能语音交互创建专用普通话 16 kHz 项目、最小权限 RAM 用户和业务热词词表。
+3. 将 `ALIYUN_NLS_ACCESS_KEY_ID`、`ALIYUN_NLS_ACCESS_KEY_SECRET`、`ALIYUN_NLS_APP_KEY`、可选热词 ID 及独立 HMAC 写入 `/etc/black-soil-loop/backend.env`；文件继续保持 `0640 root:blacksoil`。不得把值粘贴到命令日志、工单或截图。
+4. 先设置 `ASSISTANT_PUBLIC_DB_QUOTA_ENABLED=true` 和 `VOICE_ASSISTANT_ENABLED=true`，保持 `VOICE_PUBLIC_ENABLED=false`，重启 B01 后使用登录接口完成受控 WAV 转写烟测。
+5. 核对阿里云调用次数、P95、429、5xx、数据库租约与审计元数据后，再设置 `VOICE_PUBLIC_ENABLED=true`。首个 24 小时建议把 `VOICE_GLOBAL_PER_DAY` 设为 `100`。
+6. 发生供应商、费用或延迟异常时，仅将 `VOICE_PUBLIC_ENABLED=false` 并重启 B01；文字助手、预设问题、图表、SSE、B02 和数据库迁移继续保留。
+
+凭据或 HMAC 缺失时，相关语音/配额端点返回 `503 TRANSCRIPTION_NOT_CONFIGURED`，B01 健康检查、公开文字助手和 SSE 仍可启动。阿里云开通与接口说明见[一句话识别](https://help.aliyun.com/zh/isi/developer-reference/api-reference-1)和[动态 Token](https://help.aliyun.com/zh/isi/getting-started/obtain-an-access-token)。
+
+Nginx 的两个转写精确路径限制请求体并关闭请求缓冲，防止合法录音落入 `client_body_temp`。应用仅使用经可信 Nginx/Uvicorn 代理链规范化后的 `request.client.host` 生成 HMAC 主体；不得在应用层直接信任客户端提交的 `X-Forwarded-For` 或 `CF-Connecting-IP`。Cloudflare 地址段变化时应先从官方地址清单核验并更新 Nginx 配置。
 
 ## 验证
 

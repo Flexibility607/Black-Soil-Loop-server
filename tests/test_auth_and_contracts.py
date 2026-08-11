@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from app.shared.dictionaries import TRANSPORT_STATUS_LABELS, enum_label
 from app.shared.models import IdempotencyRecord
 from tests.conftest import login
@@ -33,6 +35,7 @@ def test_openapi_contains_public_sse_mobile_ws_and_device_paths(b01_client, b02_
     assert "/api/v1/public/dashboard/snapshot" in b01_paths
     assert "/api/v1/public/dictionaries" in b01_paths
     assert "/api/v1/web/assistant/transcriptions" in b01_paths
+    assert "/api/v1/public/assistant/transcriptions" in b01_paths
     assert "/api/v1/web/transport/plans/{plan_id}/publish" in b01_paths
     assert "/api/v1/web/telemetry-issues" in b01_paths
     assert "/api/v1/mobile/tasks/{task_id}/receipts" in b02_paths
@@ -88,11 +91,12 @@ def test_dashboard_units_deterministic_assistant_and_optional_transcription(b01_
     assert answer.json()["chart"]["type"] == "donut"
     assert answer.json()["allowed_chart_types"] == ["bar", "line", "donut", "route"]
 
+    request_id = str(uuid4())
     transcription = b01_client.post(
         "/api/v1/web/assistant/transcriptions",
-        headers=admin_headers,
-        data={"duration_seconds": "1.2"},
+        headers={**admin_headers, "Idempotency-Key": request_id},
+        data={"duration_seconds": "1.2", "client_request_id": request_id},
         files={"audio": ("question.webm", b"not-a-real-recording", "audio/webm")},
     )
     assert transcription.status_code == 503
-    assert transcription.json()["code"] == "TRANSCRIPTION_NOT_CONFIGURED"
+    assert transcription.json()["code"] == "VOICE_DISABLED"

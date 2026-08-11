@@ -24,8 +24,13 @@ class BusinessError(Exception):
 
 async def business_error_handler(request: Request, exc: BusinessError) -> JSONResponse:
     trace_id = getattr(request.state, "trace_id", "unknown")
+    headers: dict[str, str] = {}
+    retry_after = exc.details.get("retry_after_seconds")
+    if exc.status_code == 429 and isinstance(retry_after, int) and retry_after > 0:
+        headers["Retry-After"] = str(retry_after)
     return JSONResponse(
         status_code=exc.status_code,
+        headers=headers,
         content={
             "code": exc.code,
             "message": exc.message,

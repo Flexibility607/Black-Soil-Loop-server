@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
+from starlette.formparsers import MultiPartParser
 
 from app.shared.config import get_settings
 from app.shared.errors import BusinessError, business_error_handler, version_conflict
@@ -16,6 +17,10 @@ from app.shared.rate_limit import FixedWindowRateLimiter
 
 def configure_app(app: FastAPI) -> FastAPI:
     settings = get_settings()
+    voice_request_max_bytes = settings.voice_max_bytes + 128 * 1024
+    # Voice WAV files accepted by the application stay in memory. Oversized
+    # requests are still rejected by the application and the reverse proxy.
+    MultiPartParser.spool_max_size = max(MultiPartParser.spool_max_size, voice_request_max_bytes)
     limiter = FixedWindowRateLimiter()
     app.add_middleware(
         CORSMiddleware,
@@ -39,11 +44,48 @@ def configure_app(app: FastAPI) -> FastAPI:
 
     @app.middleware("http")
     async def trace_middleware(request: Request, call_next):
-        request.state.trace_id = request.headers.get("X-Trace-Id") or str(uuid4())
+        supplied_trace = request.headers.get("X-Trace-Id")
+        try:
+            request.state.trace_id = str(UUID(supplied_trace)) if supplied_trace else str(uuid4())
+        except (TypeError, ValueError):
+            request.state.trace_id = str(uuid4())
         path = request.url.path
+        transcription_paths = {
+            "/api/v1/public/assistant/transcriptions",
+            "/api/v1/web/assistant/transcriptions",
+        }
+        if path in transcription_paths:
+            raw_length = request.headers.get("Content-Length")
+            try:
+                content_length = int(raw_length) if raw_length is not None else None
+            except ValueError:
+                content_length = -1
+            if content_length is None or content_length < 0:
+                return JSONResponse(
+                    status_code=411,
+                    headers={"X-Trace-Id": request.state.trace_id},
+                    content={
+                        "code": "CONTENT_LENGTH_REQUIRED",
+                        "message": "语音上传必须提供有效的 Content-Length",
+                        "details": {},
+                        "trace_id": request.state.trace_id,
+                    },
+                )
+            if content_length > voice_request_max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    headers={"X-Trace-Id": request.state.trace_id},
+                    content={
+                        "code": "AUDIO_TOO_LARGE",
+                        "message": "语音上传请求超过允许大小",
+                        "details": {"maximum_request_bytes": voice_request_max_bytes},
+                        "trace_id": request.state.trace_id,
+                    },
+                )
         if path.startswith("/api/") and not path.startswith("/api/v1/dashboard/events"):
-            client = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0]
-            client = client.strip() or (request.client.host if request.client else "unknown")
+            # Uvicorn accepts proxy headers only from the loopback Nginx peer.
+            # Never consume forwarding headers here because clients can forge them.
+            client = request.client.host if request.client else "unknown"
             scope, limit = (
                 ("device", settings.device_rate_limit_per_minute)
                 if path.startswith("/api/v1/device/")

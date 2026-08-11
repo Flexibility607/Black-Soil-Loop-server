@@ -221,3 +221,4 @@ class AlertUpdate(VersionedRequest):
 class AssistantQuery(ApiModel):
     question: str = Field(min_length=2, max_length=500)
     preferred_chart: Literal["bar", "line", "donut", "route", "auto"] = "auto"
+    period: Literal["7d", "30d", "month"] = "30d"

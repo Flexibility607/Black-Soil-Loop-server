@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 from app.domain.dashboard import refresh_all_dashboard_projections
 from app.domain.forecasts import generate_next_week_forecasts
 from app.domain.services import add_audit, add_outbox
+from app.domain.voice_service import cleanup_expired_voice_requests
 from app.shared.database import SessionLocal
 from app.shared.errors import BusinessError
 from app.shared.models import (
@@ -88,6 +89,7 @@ def run_scheduled_jobs() -> dict[str, int]:
     now = utcnow()
     forecast_count = 0
     with SessionLocal() as db:
+        voice_cleanup = cleanup_expired_voice_requests(db, now=now, commit=False)
         db.execute(
             update(UserSession)
             .where(UserSession.revoked_at.is_(None), UserSession.expires_at <= now)
@@ -170,6 +172,8 @@ def run_scheduled_jobs() -> dict[str, int]:
         "forecast_changes": forecast_changes,
         "expired_qr_tokens_cleared": expired_count,
         "expired_warehouse_reservations": expired_warehouse_count,
+        "expired_voice_requests": voice_cleanup["deleted"],
+        "expired_voice_processing": voice_cleanup["expired_processing"],
     }
 
 

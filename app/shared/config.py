@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,26 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str | None = None
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
+    voice_assistant_enabled: bool = False
+    voice_public_enabled: bool = False
+    assistant_public_db_quota_enabled: bool = False
+    voice_stt_provider: str = "aliyun"
+    aliyun_nls_access_key_id: SecretStr | None = None
+    aliyun_nls_access_key_secret: SecretStr | None = None
+    aliyun_nls_app_key: SecretStr | None = None
+    aliyun_nls_endpoint: str = "https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr"
+    aliyun_nls_vocabulary_id: str | None = None
+    voice_max_seconds: int = 30
+    voice_max_bytes: int = 2 * 1024 * 1024
+    voice_public_per_minute: int = 3
+    voice_public_per_hour: int = 20
+    voice_public_per_day: int = 50
+    voice_public_text_per_minute: int = 10
+    voice_public_text_per_day: int = 200
+    voice_global_per_day: int = 500
+    voice_max_concurrency: int = 2
+    voice_lease_seconds: int = 60
+    voice_rate_limit_hmac_secret: SecretStr | None = None
     wechat_app_id: str | None = None
     wechat_app_secret: str | None = None
     device_api_key: str = "development-device-key-change-before-production"
@@ -41,6 +61,49 @@ class Settings(BaseSettings):
         if len(value) < 32:
             raise ValueError("JWT_SECRET 至少需要 32 个字符")
         return value
+
+    @field_validator("voice_stt_provider")
+    @classmethod
+    def validate_voice_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"aliyun", "openai"}:
+            raise ValueError("VOICE_STT_PROVIDER 仅支持 aliyun 或 openai")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_voice_settings(self):
+        positive_fields = (
+            "voice_max_seconds",
+            "voice_max_bytes",
+            "voice_public_per_minute",
+            "voice_public_per_hour",
+            "voice_public_per_day",
+            "voice_public_text_per_minute",
+            "voice_public_text_per_day",
+            "voice_global_per_day",
+            "voice_max_concurrency",
+            "voice_lease_seconds",
+        )
+        if any(getattr(self, field) <= 0 for field in positive_fields):
+            raise ValueError("语音助手限制配置必须为正整数")
+        if self.voice_max_seconds > 30:
+            raise ValueError("VOICE_MAX_SECONDS 不能超过 30")
+        if self.voice_max_bytes > 2 * 1024 * 1024:
+            raise ValueError("VOICE_MAX_BYTES 不能超过 2 MiB")
+        if self.voice_lease_seconds < 60:
+            raise ValueError("VOICE_LEASE_SECONDS 至少需要 60 秒以覆盖上游超时")
+        if not self.aliyun_nls_endpoint.lower().startswith("https://"):
+            raise ValueError("ALIYUN_NLS_ENDPOINT 必须使用 HTTPS")
+        if self.voice_public_enabled and not self.voice_assistant_enabled:
+            raise ValueError("VOICE_PUBLIC_ENABLED 需要同时启用 VOICE_ASSISTANT_ENABLED")
+        if self.voice_public_enabled and not self.assistant_public_db_quota_enabled:
+            raise ValueError("VOICE_PUBLIC_ENABLED 需要同时启用 ASSISTANT_PUBLIC_DB_QUOTA_ENABLED")
+        if self.is_production and self.voice_public_enabled and self.voice_stt_provider != "aliyun":
+            raise ValueError("生产匿名语音转写必须使用 aliyun provider")
+        # Credentials are checked by the affected endpoint. A missing or
+        # malformed secret must fail that request closed without preventing B01,
+        # SSE, dashboards, or the deterministic text assistant from starting.
+        return self
 
     @property
     def is_production(self) -> bool:
