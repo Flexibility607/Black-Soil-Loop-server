@@ -18,7 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from app.shared.database import Base
 
@@ -37,6 +37,12 @@ class TimestampVersionMixin:
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
     object_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    @declared_attr.directive
+    def __mapper_args__(cls) -> dict[str, object]:
+        # SQLAlchemy includes the previously loaded version in every ORM UPDATE
+        # and raises StaleDataError when another transaction wins the race.
+        return {"version_id_col": cls.object_version}
 
 
 class User(Base, TimestampVersionMixin):
@@ -141,6 +147,7 @@ class Warehouse(Base, TimestampVersionMixin):
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     capacity_m3: Mapped[float] = mapped_column(Float, nullable=False)
     used_m3: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    reserved_m3: Mapped[float] = mapped_column(Float, default=0, nullable=False)
 
 
 class Supplier(Base, TimestampVersionMixin):
@@ -184,6 +191,10 @@ class TransportOrder(Base, TimestampVersionMixin):
     destination_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     destination_longitude: Mapped[float] = mapped_column(Float, nullable=False)
     departure_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    warehouse_inbound_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    warehouse_inbound_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    warehouse_outbound_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    warehouse_outbound_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
@@ -208,7 +219,11 @@ class AlgorithmRun(Base):
 
 class TransportPlan(Base, TimestampVersionMixin):
     __tablename__ = "transport_plans"
-    __table_args__ = (UniqueConstraint("plan_no", name="uq_b01_transport_plans_no"), {"schema": "b01"})
+    __table_args__ = (
+        UniqueConstraint("plan_no", name="uq_b01_transport_plans_no"),
+        UniqueConstraint("algorithm_run_id", name="uq_b01_transport_plans_algorithm_run"),
+        {"schema": "b01"},
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     plan_no: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -228,7 +243,170 @@ class DashboardProjection(Base, TimestampVersionMixin):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="current")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
-    data_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WarehousePoolPlan(Base, TimestampVersionMixin):
+    __tablename__ = "warehouse_pool_plans"
+    __table_args__ = (
+        UniqueConstraint("plan_no", name="uq_b01_warehouse_pool_plans_no"),
+        UniqueConstraint("algorithm_run_id", name="uq_b01_warehouse_pool_plans_run"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_no: Mapped[str] = mapped_column(String(50), nullable=False)
+    algorithm_run_id: Mapped[str] = mapped_column(ForeignKey("b01.algorithm_runs.id"), nullable=False, index=True)
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("core.warehouses.id"), nullable=False, index=True)
+    order_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    required_volume_m3: Mapped[float] = mapped_column(Float, nullable=False)
+    inbound_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    inbound_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outbound_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outbound_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="RESERVATION_REQUESTED", nullable=False, index=True)
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class WarehouseReservation(Base, TimestampVersionMixin):
+    __tablename__ = "warehouse_reservations"
+    __table_args__ = (
+        UniqueConstraint("warehouse_pool_plan_id", name="uq_b01_warehouse_reservations_plan"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    warehouse_pool_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("b01.warehouse_pool_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("core.warehouses.id"), nullable=False, index=True)
+    reserved_volume_m3: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="RESERVED", nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    occupied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReceiptProjection(Base):
+    __tablename__ = "receipt_projections"
+    __table_args__ = (
+        UniqueConstraint("source_receipt_id", name="uq_b01_receipt_projection_source"),
+        UniqueConstraint("source_event_id", name="uq_b01_receipt_projection_event"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_receipt_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    task_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("core.stores.id"), nullable=False, index=True)
+    receipt_status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    expected_total: Mapped[float] = mapped_column(Float, nullable=False)
+    received_total: Mapped[float] = mapped_column(Float, nullable=False)
+    difference_total: Mapped[float] = mapped_column(Float, nullable=False)
+    rejected_line_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    details: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    business_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    projected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class InventoryMovementProjection(Base):
+    __tablename__ = "inventory_movement_projections"
+    __table_args__ = (
+        UniqueConstraint("source_movement_id", name="uq_b01_inventory_movement_projection_source"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_movement_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    store_id: Mapped[str] = mapped_column(ForeignKey("core.stores.id"), nullable=False, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
+    movement_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    quantity_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity_delta: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity_context: Mapped[str] = mapped_column(String(40), default="RECORDED", nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    business_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    projected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class StockoutDemandProjection(Base):
+    __tablename__ = "stockout_demand_projections"
+    __table_args__ = (
+        UniqueConstraint("source_stockout_id", name="uq_b01_stockout_projection_source"),
+        UniqueConstraint("source_event_id", name="uq_b01_stockout_projection_event"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_stockout_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    store_id: Mapped[str] = mapped_column(ForeignKey("core.stores.id"), nullable=False, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
+    requested_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    business_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    projected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class StoreDailyReportProjection(Base):
+    __tablename__ = "store_daily_report_projections"
+    __table_args__ = (
+        UniqueConstraint("source_report_id", name="uq_b01_daily_report_projection_source"),
+        UniqueConstraint("source_event_id", name="uq_b01_daily_report_projection_event"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_report_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    store_id: Mapped[str] = mapped_column(ForeignKey("core.stores.id"), nullable=False, index=True)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    sales_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    authorized_for_dashboard: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, nullable=False)
+    business_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    projected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class TelemetryIssueProjection(Base):
+    __tablename__ = "telemetry_issue_projections"
+    __table_args__ = (
+        UniqueConstraint("source_issue_id", name="uq_b01_telemetry_issue_projection_source"),
+        UniqueConstraint("source_event_id", name="uq_b01_telemetry_issue_projection_event"),
+        Index("ix_b01_telemetry_issue_business", "business_at"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_issue_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    task_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    store_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    issue_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    task_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    expected_vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actual_vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expected_driver_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actual_driver_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    business_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    projected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class DemandHistory(Base):
@@ -254,6 +432,107 @@ class ProductionPlan(Base):
     product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
     plan_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     planned_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class ProcurementDemandConfirmation(Base, TimestampVersionMixin):
+    __tablename__ = "procurement_demand_confirmations"
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_id",
+            "product_id",
+            "cycle_start",
+            name="uq_b01_procurement_demand_enterprise_product_cycle",
+        ),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    enterprise_id: Mapped[str] = mapped_column(ForeignKey("core.enterprises.id"), nullable=False, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
+    cycle_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    cycle_end: Mapped[date] = mapped_column(Date, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="CONFIRMED", nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    confirmed_by: Mapped[str] = mapped_column(ForeignKey("iam.users.id"), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ProcurementAggregation(Base, TimestampVersionMixin):
+    __tablename__ = "procurement_aggregations"
+    __table_args__ = (
+        UniqueConstraint("product_id", "cycle_start", name="uq_b01_procurement_aggregation_product_cycle"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
+    cycle_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    cycle_end: Mapped[date] = mapped_column(Date, nullable=False)
+    base_unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    automatic_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    adjusted_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="DRAFT", nullable=False, index=True)
+    rules_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    candidate_snapshot: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    recommendation_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    unit_conversion_warnings: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    adjustment_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    confirmed_by: Mapped[str | None] = mapped_column(ForeignKey("iam.users.id"), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DemandForecastProjection(Base, TimestampVersionMixin):
+    __tablename__ = "demand_forecast_projections"
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_id",
+            "product_id",
+            "forecast_start",
+            name="uq_b01_forecast_enterprise_product_period",
+        ),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    enterprise_id: Mapped[str] = mapped_column(ForeignKey("core.enterprises.id"), nullable=False, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
+    forecast_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    forecast_end: Mapped[date] = mapped_column(Date, nullable=False)
+    historical_usage: Mapped[float] = mapped_column(Float, nullable=False)
+    production_plan_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    forecast_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    suggested_purchase_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    lower_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    upper_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mae: Mapped[float | None] = mapped_column(Float, nullable=True)
+    smape: Mapped[float | None] = mapped_column(Float, nullable=True)
+    method: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    method_note: Mapped[str] = mapped_column(String(500), nullable=False)
+    data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class DemandForecastBatch(Base, TimestampVersionMixin):
+    __tablename__ = "demand_forecast_batches"
+    __table_args__ = (
+        UniqueConstraint("forecast_start", name="uq_b01_forecast_batch_period"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    forecast_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    forecast_end: Mapped[date] = mapped_column(Date, nullable=False)
+    rules_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    data_signature: Mapped[str] = mapped_column(String(64), nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    aggregate_snapshot: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="READY", nullable=False, index=True)
+    scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class TransportTask(Base, TimestampVersionMixin):
@@ -377,7 +656,10 @@ class InventoryMovement(Base):
     store_id: Mapped[str] = mapped_column(ForeignKey("core.stores.id"), nullable=False, index=True)
     product_id: Mapped[str] = mapped_column(ForeignKey("core.products.id"), nullable=False, index=True)
     movement_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    quantity_before: Mapped[float | None] = mapped_column(Float, nullable=True)
     quantity_delta: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity_context: Mapped[str] = mapped_column(String(40), default="RECORDED", nullable=False)
     source_type: Mapped[str] = mapped_column(String(30), nullable=False)
     source_id: Mapped[str] = mapped_column(String(36), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -434,6 +716,33 @@ class TelemetryPoint(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     anomaly_code: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+
+
+class TelemetryIssue(Base):
+    __tablename__ = "telemetry_issues"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_b02_telemetry_issue_source_key"),
+        Index("ix_b02_telemetry_issue_task_occurred", "task_id", "occurred_at"),
+        {"schema": "b02"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    task_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    store_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    issue_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="OPEN", nullable=False, index=True)
+    task_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    expected_vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actual_vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expected_driver_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actual_driver_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class LocationPoint(Base):
@@ -496,9 +805,11 @@ class IdempotencyRecord(Base):
     scope: Mapped[str] = mapped_column(String(200), nullable=False)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
-    response_body: Mapped[dict] = mapped_column(JSON, nullable=False)
+    state: Mapped[str] = mapped_column(String(20), default="PROCESSING", nullable=False, index=True)
+    status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    response_body: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OutboxEvent(Base):
@@ -515,6 +826,8 @@ class OutboxEvent(Base):
     status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    claimed_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

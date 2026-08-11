@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ApiModel(BaseModel):
@@ -62,11 +62,34 @@ class TransportOrderCreate(ApiModel):
     destination_latitude: float = Field(ge=-90, le=90)
     destination_longitude: float = Field(ge=-180, le=180)
     departure_at: datetime
+    warehouse_inbound_start: datetime | None = None
+    warehouse_inbound_end: datetime | None = None
+    warehouse_outbound_start: datetime | None = None
+    warehouse_outbound_end: datetime | None = None
     quantity: float = Field(gt=0)
     unit: str = Field(min_length=1, max_length=20)
     weight_kg: float = Field(gt=0)
     volume_m3: float = Field(gt=0)
     temperature_zone: Literal["AMBIENT", "CHILLED", "FROZEN"]
+
+    @model_validator(mode="after")
+    def validate_warehouse_windows(self):
+        values = (
+            self.warehouse_inbound_start,
+            self.warehouse_inbound_end,
+            self.warehouse_outbound_start,
+            self.warehouse_outbound_end,
+        )
+        if any(value is not None for value in values) and any(value is None for value in values):
+            raise ValueError("入仓和出仓时间窗必须同时完整提供")
+        if all(value is not None for value in values):
+            if self.warehouse_inbound_start >= self.warehouse_inbound_end:
+                raise ValueError("入仓时间窗开始时间必须早于结束时间")
+            if self.warehouse_outbound_start >= self.warehouse_outbound_end:
+                raise ValueError("出仓时间窗开始时间必须早于结束时间")
+            if self.warehouse_inbound_end > self.warehouse_outbound_start:
+                raise ValueError("入仓时间窗结束时间不能晚于出仓时间窗开始时间")
+        return self
 
 
 class VersionedRequest(ApiModel):
@@ -85,6 +108,39 @@ class MatchPreviewRequest(ApiModel):
 class MatchConfirmRequest(VersionedRequest):
     match_run_id: str
     candidate_index: int = Field(default=0, ge=0)
+    order_versions: dict[str, int] = Field(default_factory=dict)
+
+
+class WarehousePoolConfirmRequest(ApiModel):
+    match_run_id: str
+    candidate_index: int = Field(default=0, ge=0)
+    warehouse_id: str
+    warehouse_object_version: int = Field(ge=1)
+
+
+class ProcurementDemandConfirmRequest(ApiModel):
+    enterprise_id: str
+    product_id: str
+    cycle_start: date | None = None
+    quantity: float = Field(gt=0)
+    unit: str = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=2, max_length=500)
+    object_version: int | None = Field(default=None, ge=1)
+
+
+class ProcurementGenerateRequest(ApiModel):
+    cycle_start: date | None = None
+
+
+class ProcurementAggregationConfirmRequest(VersionedRequest):
+    adjusted_quantity: float | None = Field(default=None, ge=0)
+    adjustment_reason: str | None = Field(default=None, min_length=2, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_adjustment_reason(self):
+        if self.adjusted_quantity is not None and not self.adjustment_reason:
+            raise ValueError("手工调整采购量时必须填写调整原因")
+        return self
 
 
 class TaskActionRequest(VersionedRequest):

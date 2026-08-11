@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.shared.config import get_settings
 from app.shared.errors import BusinessError
 from app.shared.models import User, UserSession, utcnow
+from app.shared.optimistic import atomic_versioned_update
 
 ALGORITHM = "HS256"
 PBKDF2_ITERATIONS = 480_000
@@ -87,23 +88,43 @@ def issue_tokens(db: Session, user: User) -> IssuedTokens:
     access_expires = now + timedelta(minutes=settings.access_token_minutes)
     refresh_expires = now + timedelta(days=settings.refresh_token_days)
 
+    user_id = user.id
+    for attempt in range(3):
+        current_user = db.scalar(
+            select(User).where(User.id == user_id).execution_options(populate_existing=True)
+        )
+        if current_user is None:
+            raise BusinessError("USER_NOT_FOUND", "用户不存在", status_code=404)
+        next_session_version = current_user.session_version + 1
+        try:
+            atomic_versioned_update(
+                db,
+                User,
+                user_id,
+                current_user.object_version,
+                {"session_version": next_session_version},
+            )
+            break
+        except BusinessError as exc:
+            if exc.code != "VERSION_CONFLICT" or attempt == 2:
+                raise
+            db.expire_all()
     db.execute(
         update(UserSession)
-        .where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
+        .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
         .values(revoked_at=now)
     )
-    user.session_version += 1
     session = UserSession(
-        user_id=user.id,
+        user_id=user_id,
         refresh_token_hash="pending",
-        session_version=user.session_version,
+        session_version=next_session_version,
         expires_at=refresh_expires,
         last_activity_at=now,
     )
     db.add(session)
     db.flush()
 
-    common = {"sub": user.id, "sid": session.id, "ver": user.session_version, "iat": now}
+    common = {"sub": user.id, "sid": session.id, "ver": next_session_version, "iat": now}
     access_token = _encode({**common, "type": "access", "exp": access_expires})
     refresh_token = _encode({**common, "type": "refresh", "exp": refresh_expires, "nonce": secrets.token_hex(8)})
     session.refresh_token_hash = token_hash(refresh_token)
@@ -126,16 +147,34 @@ def rotate_refresh_token(db: Session, raw_refresh_token: str) -> tuple[User, Iss
         raise BusinessError("SESSION_REPLACED", "账号已在其他位置重新登录", status_code=401)
     idle_limit = timedelta(minutes=get_settings().idle_timeout_minutes)
     if now - as_utc(session.last_activity_at) > idle_limit:
-        session.revoked_at = now
+        db.execute(
+            update(UserSession)
+            .where(UserSession.id == session.id, UserSession.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
         db.commit()
         raise BusinessError("SESSION_TIMEOUT", "长时间未操作，已自动退出", status_code=401)
-    session.revoked_at = now
-    db.flush()
+    claimed = db.execute(
+        update(UserSession)
+        .where(
+            UserSession.id == session.id,
+            UserSession.revoked_at.is_(None),
+            UserSession.refresh_token_hash == token_hash(raw_refresh_token),
+            UserSession.session_version == payload.get("ver"),
+        )
+        .values(revoked_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise BusinessError("SESSION_INVALID", "会话已失效", status_code=401)
     return user, issue_tokens(db, user)
 
 
 def revoke_session(db: Session, session_id: str) -> None:
-    session = db.get(UserSession, session_id)
-    if session and session.revoked_at is None:
-        session.revoked_at = utcnow()
+    revoked = db.execute(
+        update(UserSession)
+        .where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    if revoked.rowcount:
         db.commit()

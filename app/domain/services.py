@@ -3,12 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from datetime import UTC, timedelta
+import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from app.shared.dictionaries import (
+    ALERT_TYPE_LABELS,
+    RECEIPT_STATUS_LABELS,
+    TRANSPORT_ACTION_LABELS,
+    TRANSPORT_STATUS_LABELS,
+    enum_label,
+)
 from app.shared.errors import BusinessError, version_conflict
 from app.shared.models import (
     Alert,
@@ -24,11 +33,13 @@ from app.shared.models import (
     TaskEvent,
     TaskException,
     TaskStop,
+    TelemetryIssue,
     TelemetryPoint,
     TransportTask,
     User,
     utcnow,
 )
+from app.shared.optimistic import atomic_versioned_update
 
 ACTION_TRANSITIONS = {
     ("PUBLISHED", "ACCEPT"): "DRIVER_ACCEPTED",
@@ -43,19 +54,123 @@ TEMPERATURE_LIMITS = {
 }
 
 
+def record_telemetry_issue(
+    db: Session,
+    *,
+    task_id: str,
+    store_id: str | None,
+    source_type: str,
+    issue_type: str,
+    idempotency_key: str,
+    message: str,
+    trace_id: str,
+    severity: str = "WARNING",
+    task_status: str | None = None,
+    expected_vehicle_id: str | None = None,
+    actual_vehicle_id: str | None = None,
+    expected_driver_id: str | None = None,
+    actual_driver_id: str | None = None,
+    details: dict[str, Any] | None = None,
+    actor_user_id: str | None = None,
+) -> TelemetryIssue:
+    source_key = f"{source_type}:{issue_type}:{stable_hash({'task_id': task_id, 'key': idempotency_key})}"
+    existing = db.scalar(select(TelemetryIssue).where(TelemetryIssue.source_key == source_key))
+    if existing is not None:
+        return existing
+    issue = TelemetryIssue(
+        source_key=source_key,
+        task_id=task_id,
+        store_id=store_id,
+        source_type=source_type,
+        issue_type=issue_type,
+        severity=severity,
+        task_status=task_status,
+        expected_vehicle_id=expected_vehicle_id,
+        actual_vehicle_id=actual_vehicle_id,
+        expected_driver_id=expected_driver_id,
+        actual_driver_id=actual_driver_id,
+        message=message,
+        details=details or {},
+    )
+    try:
+        with db.begin_nested():
+            db.add(issue)
+            db.flush()
+    except IntegrityError as exc:
+        db.expire_all()
+        existing = db.scalar(select(TelemetryIssue).where(TelemetryIssue.source_key == source_key))
+        if existing is None:
+            raise RuntimeError("遥测一致性问题并发记录失败") from exc
+        return existing
+    event_payload = {
+        "issue_id": issue.id,
+        "task_id": task_id,
+        "source_type": source_type,
+        "issue_type": issue_type,
+        "severity": severity,
+        "task_status": task_status,
+        "message": message,
+    }
+    add_outbox(db, "telemetry.issue.recorded", "telemetry_issue", issue.id, 1, event_payload)
+    add_audit(
+        db,
+        trace_id,
+        actor_user_id,
+        "RECORD_TELEMETRY_ISSUE",
+        "telemetry_issue",
+        issue.id,
+        None,
+        event_payload,
+    )
+    return issue
+
+
 def stable_hash(payload: Any) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def load_idempotent(db: Session, scope: str, key: str, payload: Any) -> dict[str, Any] | None:
-    record = db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.scope == scope, IdempotencyRecord.key == key))
-    if not record:
-        return None
-    if record.request_hash != stable_hash(payload):
+    request_hash = stable_hash(payload)
+    query = select(IdempotencyRecord).where(IdempotencyRecord.scope == scope, IdempotencyRecord.key == key)
+    record = db.scalar(query)
+    if record is None:
+        for attempt in range(3):
+            candidate = IdempotencyRecord(
+                scope=scope,
+                key=key,
+                request_hash=request_hash,
+                state="PROCESSING",
+                status_code=0,
+                response_body={},
+            )
+            try:
+                with db.begin_nested():
+                    db.add(candidate)
+                    db.flush()
+                return None
+            except IntegrityError:
+                db.expire_all()
+                record = db.scalar(query.execution_options(populate_existing=True))
+                if record is None:
+                    raise
+                break
+            except OperationalError:
+                if db.bind is None or db.bind.dialect.name != "sqlite" or attempt == 2:
+                    raise
+                db.expire_all()
+                time.sleep(0.02 * (attempt + 1))
+    if record.request_hash != request_hash:
         raise BusinessError(
             "IDEMPOTENCY_CONFLICT",
             "同一个幂等键不能用于不同请求",
+            status_code=409,
+            details={"scope": scope},
+        )
+    if record.state == "PROCESSING":
+        raise BusinessError(
+            "IDEMPOTENCY_IN_PROGRESS",
+            "相同幂等请求正在处理中，请稍后重试",
             status_code=409,
             details={"scope": scope},
         )
@@ -70,15 +185,16 @@ def save_idempotent(
     response_body: dict[str, Any],
     status_code: int = 200,
 ) -> None:
-    db.add(
-        IdempotencyRecord(
-            scope=scope,
-            key=key,
-            request_hash=stable_hash(payload),
-            status_code=status_code,
-            response_body=response_body,
-        )
+    request_hash = stable_hash(payload)
+    record = db.scalar(
+        select(IdempotencyRecord).where(IdempotencyRecord.scope == scope, IdempotencyRecord.key == key)
     )
+    if record is None or record.request_hash != request_hash or record.state != "PROCESSING":
+        raise RuntimeError("幂等记录未在当前事务中取得或状态无效")
+    record.state = "COMPLETED"
+    record.status_code = status_code
+    record.response_body = response_body
+    record.completed_at = utcnow()
 
 
 def add_outbox(
@@ -130,11 +246,11 @@ def ensure_task_scope(user: User, task: TransportTask) -> None:
         raise BusinessError("FORBIDDEN", "只能操作本门店任务", status_code=403)
 
 
-def create_task_qr(task: TransportTask) -> str:
-    raw = f"BSL:{task.task_no}:{secrets.token_urlsafe(18)}"
-    task.qr_token_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    task.qr_expires_at = utcnow() + timedelta(days=2)
-    return raw
+def create_task_qr(task_no: str) -> tuple[str, str, datetime]:
+    raw = f"BSL:{task_no}:{secrets.token_urlsafe(18)}"
+    token_hash_value = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    expires_at = utcnow() + timedelta(days=2)
+    return raw, token_hash_value, expires_at
 
 
 def verify_task_qr(task: TransportTask, raw: str | None) -> None:
@@ -166,7 +282,7 @@ def transition_task(
         return cached
     ensure_task_scope(user, task)
     if task.object_version != expected_version:
-        raise version_conflict(task.object_version)
+        raise version_conflict(task.object_version, expected_version)
 
     before = {"status": task.status, "object_version": task.object_version}
     from_status = task.status
@@ -188,10 +304,19 @@ def transition_task(
         )
         if target is None:
             raise BusinessError("STOP_NOT_FOUND", "没有可送达的站点", status_code=409)
+        if target.status != "PLANNED":
+            raise BusinessError("STOP_ALREADY_DELIVERED", "该站点已经送达，不能重复操作", status_code=409)
         verify_task_qr(task, payload.get("qr_token"))
-        target.status = "DELIVERED"
-        target.object_version += 1
-        to_status = "DELIVERED" if all(stop.status != "PLANNED" for stop in stops) else "IN_TRANSIT"
+        atomic_versioned_update(
+            db,
+            TaskStop,
+            target.id,
+            target.object_version,
+            {"status": "DELIVERED"},
+            conditions=(TaskStop.status == "PLANNED",),
+        )
+        remaining_planned = sum(stop.status == "PLANNED" for stop in stops) - 1
+        to_status = "DELIVERED" if remaining_planned == 0 else "IN_TRANSIT"
     else:
         to_status = ACTION_TRANSITIONS.get((task.status, action), "")
         if not to_status:
@@ -204,8 +329,14 @@ def transition_task(
         if action == "PICKUP":
             verify_task_qr(task, payload.get("qr_token"))
 
-    task.status = to_status
-    task.object_version += 1
+    next_task_version = atomic_versioned_update(
+        db,
+        TransportTask,
+        task.id,
+        expected_version,
+        {"status": to_status},
+        conditions=(TransportTask.status == from_status,),
+    )
     event = TaskEvent(
         task_id=task.id,
         from_status=from_status,
@@ -220,10 +351,12 @@ def transition_task(
     response = {
         "task_id": task.id,
         "task_no": task.task_no,
-        "status": task.status,
-        "object_version": task.object_version,
+        "status": to_status,
+        "status_label": enum_label(TRANSPORT_STATUS_LABELS, to_status),
+        "action_label": enum_label(TRANSPORT_ACTION_LABELS, action),
+        "object_version": next_task_version,
     }
-    add_outbox(db, "transport.task.status_changed", "transport_task", task.id, task.object_version, response)
+    add_outbox(db, "transport.task.status_changed", "transport_task", task.id, next_task_version, response)
     add_audit(db, trace_id, user.id, action, "transport_task", task.id, before, response)
     save_idempotent(db, scope, idempotency_key, payload, response)
     db.commit()
@@ -255,7 +388,7 @@ def sign_receipt(
     if user.role not in {"store_manager", "third_space_manager", "park_admin"}:
         raise BusinessError("FORBIDDEN", "当前角色不能执行签收", status_code=403)
     if task.object_version != expected_version:
-        raise version_conflict(task.object_version)
+        raise version_conflict(task.object_version, expected_version)
     if task.status not in {"DELIVERED", "STORE_SIGNED"}:
         raise BusinessError("INVALID_TRANSITION", "任务尚未全部送达", status_code=409)
     verify_task_qr(task, qr_token)
@@ -290,6 +423,32 @@ def sign_receipt(
     if receipt_status == "REJECTED" and any(received_by_product.values()):
         raise BusinessError("REJECTED_RECEIPT_REQUIRES_ZERO", "拒收时实收数量必须为零", status_code=409)
 
+    before = {"status": task.status, "object_version": task.object_version}
+    other_unsigned_stops = db.scalar(
+        select(func.count(TaskStop.id)).where(
+            TaskStop.task_id == task.id,
+            TaskStop.id != stop.id,
+            TaskStop.status != "SIGNED",
+        )
+    )
+    next_task_status = "COMPLETED" if (other_unsigned_stops or 0) == 0 else "STORE_SIGNED"
+    atomic_versioned_update(
+        db,
+        TaskStop,
+        stop.id,
+        stop.object_version,
+        {"status": "SIGNED"},
+        conditions=(TaskStop.status == "DELIVERED",),
+    )
+    next_task_version = atomic_versioned_update(
+        db,
+        TransportTask,
+        task.id,
+        expected_version,
+        {"status": next_task_status},
+        conditions=(TransportTask.status == before["status"],),
+    )
+
     receipt = Receipt(
         task_id=task.id,
         store_id=store_id,
@@ -301,43 +460,64 @@ def sign_receipt(
     db.add(receipt)
     db.flush()
 
-    for line in lines:
+    for line in sorted(lines, key=lambda item: item["product_id"]):
         received = float(line["received_quantity"])
         if receipt_status == "REJECTED" or received <= 0:
             continue
-        balance = db.scalar(
-            select(InventoryBalance).where(
-                InventoryBalance.store_id == store_id,
-                InventoryBalance.product_id == line["product_id"],
+        product_id = line["product_id"]
+        quantity_before = 0.0
+        quantity_after = received
+        for attempt in range(5):
+            balance = db.scalar(
+                select(InventoryBalance)
+                .where(
+                    InventoryBalance.store_id == store_id,
+                    InventoryBalance.product_id == product_id,
+                )
+                .execution_options(populate_existing=True)
             )
-        )
-        if balance is None:
-            balance = InventoryBalance(store_id=store_id, product_id=line["product_id"], quantity=0)
-            db.add(balance)
-            db.flush()
-        balance.quantity += received
-        balance.object_version += 1
+            if balance is None:
+                try:
+                    with db.begin_nested():
+                        db.add(InventoryBalance(store_id=store_id, product_id=product_id, quantity=received))
+                        db.flush()
+                    quantity_before = 0.0
+                    quantity_after = received
+                    break
+                except IntegrityError:
+                    db.expire_all()
+                    if attempt == 4:
+                        raise
+                    continue
+            try:
+                quantity_before = float(balance.quantity)
+                quantity_after = quantity_before + received
+                atomic_versioned_update(
+                    db,
+                    InventoryBalance,
+                    balance.id,
+                    balance.object_version,
+                    {"quantity": InventoryBalance.quantity + received},
+                )
+                break
+            except BusinessError as exc:
+                if exc.code != "VERSION_CONFLICT" or attempt == 4:
+                    raise
+                db.expire_all()
         db.add(
             InventoryMovement(
                 store_id=store_id,
                 product_id=line["product_id"],
                 movement_type="IN",
+                quantity_before=quantity_before,
                 quantity_delta=received,
+                quantity_after=quantity_after,
                 source_type="RECEIPT",
                 source_id=receipt.id,
                 idempotency_key=f"{idempotency_key}:{line['product_id']}",
             )
         )
 
-    before = {"status": task.status, "object_version": task.object_version}
-    stop.status = "SIGNED"
-    stop.object_version += 1
-    db.flush()
-    all_signed = (
-        db.scalar(select(func.count(TaskStop.id)).where(TaskStop.task_id == task.id, TaskStop.status != "SIGNED")) == 0
-    )
-    task.status = "COMPLETED" if all_signed else "STORE_SIGNED"
-    task.object_version += 1
     db.add(
         TaskEvent(
             task_id=task.id,
@@ -349,7 +529,7 @@ def sign_receipt(
             payload={"receipt_id": receipt.id, "store_id": store_id},
         )
     )
-    if all_signed:
+    if next_task_status == "COMPLETED":
         db.add(
             TaskEvent(
                 task_id=task.id,
@@ -367,11 +547,13 @@ def sign_receipt(
         "task_id": task.id,
         "store_id": store_id,
         "receipt_status": receipt_status,
-        "task_status": task.status,
-        "object_version": task.object_version,
+        "receipt_status_label": enum_label(RECEIPT_STATUS_LABELS, receipt_status),
+        "task_status": next_task_status,
+        "task_status_label": enum_label(TRANSPORT_STATUS_LABELS, next_task_status),
+        "object_version": next_task_version,
     }
     add_outbox(db, "store.receipt.completed", "receipt", receipt.id, 1, response)
-    add_outbox(db, "transport.task.status_changed", "transport_task", task.id, task.object_version, response)
+    add_outbox(db, "transport.task.status_changed", "transport_task", task.id, next_task_version, response)
     add_audit(db, trace_id, user.id, "SIGN_RECEIPT", "transport_task", task.id, before, response)
     save_idempotent(db, scope, idempotency_key, payload, response, 201)
     db.commit()
@@ -447,6 +629,7 @@ def ingest_telemetry(
     samples: list[dict[str, Any]],
     *,
     idempotency_key: str,
+    trace_id: str,
 ) -> dict[str, Any]:
     payload = {"task_id": task.id, "vehicle_id": task.vehicle_id, "samples": samples}
     scope = f"telemetry:{task.id}"
@@ -478,7 +661,37 @@ def ingest_telemetry(
             db.add(alert)
             db.flush()
             add_outbox(db, "transport.alert.opened", "alert", alert.id, 1, {"task_id": task.id, "type": alert_type})
-    response = {"accepted": created, "anomaly_types": sorted(anomalies)}
+    if anomalies:
+        record_telemetry_issue(
+            db,
+            task_id=task.id,
+            store_id=task.store_id,
+            source_type="DEVICE_TELEMETRY",
+            issue_type="ANOMALOUS_TELEMETRY",
+            idempotency_key=idempotency_key,
+            message=f"遥测批次出现{'、'.join(sorted(anomalies))}异常",
+            trace_id=trace_id,
+            severity="CRITICAL",
+            task_status=task.status,
+            expected_vehicle_id=task.vehicle_id,
+            actual_vehicle_id=task.vehicle_id,
+            details={"anomaly_types": sorted(anomalies), "sample_count": created},
+        )
+    response = {
+        "accepted": created,
+        "anomaly_types": sorted(anomalies),
+        "anomaly_type_labels": [enum_label(ALERT_TYPE_LABELS, value) for value in sorted(anomalies)],
+    }
+    add_audit(
+        db,
+        trace_id,
+        None,
+        "INGEST_TELEMETRY",
+        "transport_task",
+        task.id,
+        None,
+        response,
+    )
     save_idempotent(db, scope, idempotency_key, payload, response, 202)
     db.commit()
     return response
@@ -491,6 +704,7 @@ def create_location_point(
     user: User,
     payload: dict[str, Any],
     idempotency_key: str,
+    trace_id: str,
 ) -> dict[str, Any]:
     scope = f"task-location:{task.id}"
     cached = load_idempotent(db, scope, idempotency_key, payload)
@@ -509,6 +723,16 @@ def create_location_point(
     db.flush()
     response = {"id": point.id, "task_id": task.id, "recorded_at": point.recorded_at.isoformat()}
     add_outbox(db, "transport.location.recorded", "location_point", point.id, 1, response)
+    add_audit(
+        db,
+        trace_id,
+        user.id,
+        "RECORD_TASK_LOCATION",
+        "location_point",
+        point.id,
+        None,
+        response,
+    )
     save_idempotent(db, scope, idempotency_key, payload, response, 201)
     db.commit()
     return response

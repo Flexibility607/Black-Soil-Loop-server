@@ -7,9 +7,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.config import get_settings
-from app.shared.errors import BusinessError, business_error_handler
+from app.shared.errors import BusinessError, business_error_handler, version_conflict
 from app.shared.rate_limit import FixedWindowRateLimiter
 
 
@@ -31,6 +32,10 @@ def configure_app(app: FastAPI) -> FastAPI:
         ],
     )
     app.add_exception_handler(BusinessError, business_error_handler)
+
+    @app.exception_handler(StaleDataError)
+    async def stale_data_handler(request: Request, _: StaleDataError) -> JSONResponse:
+        return await business_error_handler(request, version_conflict(None, None))
 
     @app.middleware("http")
     async def trace_middleware(request: Request, call_next):

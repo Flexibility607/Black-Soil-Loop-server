@@ -214,6 +214,9 @@ def seed(reset: bool = False) -> dict[str, object]:
                 store = chosen_stores[order_index % len(chosen_stores)]
                 enterprise = enterprises[order_index % len(enterprises)]
                 jitter = (order_index % 3) * 0.008
+                departure_at = (
+                    local_midnight + timedelta(hours=7 + scenario_index, minutes=(order_index % 4) * 15)
+                ).astimezone(UTC)
                 order = TransportOrder(
                     id=sid("order", f"{scenario_index + 1}-{order_index + 1}"),
                     order_no=f"Y{today.year % 100:02d}{scenario_index + 1}{order_index + 1:03d}",
@@ -225,9 +228,11 @@ def seed(reset: bool = False) -> dict[str, object]:
                     origin_longitude=origin_lon + jitter / 2,
                     destination_latitude=store.latitude,
                     destination_longitude=store.longitude,
-                    departure_at=(
-                        local_midnight + timedelta(hours=7 + scenario_index, minutes=(order_index % 4) * 15)
-                    ).astimezone(UTC),
+                    departure_at=departure_at,
+                    warehouse_inbound_start=departure_at - timedelta(hours=6),
+                    warehouse_inbound_end=departure_at - timedelta(hours=4),
+                    warehouse_outbound_start=departure_at - timedelta(hours=2),
+                    warehouse_outbound_end=departure_at,
                     quantity=24 + (order_index % 5) * 6,
                     unit=product.unit,
                     weight_kg=180 + (order_index % 5) * 55,

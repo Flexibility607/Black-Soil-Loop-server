@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.shared.errors import BusinessError
 from app.shared.models import (
     Alert,
     DashboardProjection,
@@ -25,6 +26,8 @@ from app.shared.models import (
     Warehouse,
     utcnow,
 )
+from app.shared.optimistic import atomic_versioned_update
+from app.shared.periods import PERIOD_VALUES, period_window
 from app.shared.security import as_utc
 
 
@@ -32,13 +35,14 @@ def _number(value: Decimal | float | int | None) -> float:
     return round(float(value or 0), 2)
 
 
-def build_dashboard_snapshot(db: Session) -> dict[str, Any]:
+def build_dashboard_snapshot(db: Session, period: str = "30d") -> dict[str, Any]:
     now = utcnow()
-    cutoff_day = now.date() - timedelta(days=13)
+    window = period_window(period, now)
     reports = list(
         db.scalars(
             select(StoreDailyReport).where(
-                StoreDailyReport.report_date >= cutoff_day,
+                StoreDailyReport.report_date >= window.start_date,
+                StoreDailyReport.report_date <= window.end_date,
                 StoreDailyReport.authorized_for_dashboard.is_(True),
             )
         )
@@ -81,7 +85,15 @@ def build_dashboard_snapshot(db: Session) -> dict[str, Any]:
     daily_preorder_by_channel: dict[tuple[str, str], int] = defaultdict(int)
     preorder_count = 0
     committed_order_ids = {order_id for task in tasks for order_id in task.source_order_ids}
-    for order in db.scalars(select(TransportOrder)):
+    orders = list(
+        db.scalars(
+            select(TransportOrder).where(
+                TransportOrder.created_at >= window.start_at,
+                TransportOrder.created_at < window.end_at,
+            )
+        )
+    )
+    for order in orders:
         if order.status not in {"CONFIRMED", "COMPLETED"} and order.id not in committed_order_ids:
             continue
         preorder_count += 1
@@ -168,13 +180,24 @@ def build_dashboard_snapshot(db: Session) -> dict[str, Any]:
         values["sales_amount"] for store_id, values in store_sales.items() if stores[store_id].channel == "THIRD_SPACE"
     )
     warehouses = list(db.scalars(select(Warehouse)))
-    data_cutoff = max(
+    cutoff_candidates = (
         [as_utc(report.updated_at) for report in reports]
+        + [as_utc(store.updated_at) for store in stores.values()]
+        + [as_utc(enterprise.updated_at) for enterprise in enterprises.values()]
+        + [as_utc(product.updated_at) for product in products.values()]
+        + [as_utc(vehicle.updated_at) for vehicle in vehicles.values()]
+        + [as_utc(order.updated_at) for order in orders]
+        + [as_utc(task.updated_at) for task in tasks]
+        + [as_utc(stop.updated_at) for stop in stops]
+        + [as_utc(item.updated_at) for item in inventory_rows]
+        + [as_utc(item.updated_at) for item in warehouses]
+        + [as_utc(item.updated_at) for item in alerts]
         + [as_utc(point.sampled_at) for point in latest_telemetry]
         + [as_utc(location.recorded_at) for location in latest_locations]
-        + [now]
     )
+    data_cutoff = max(cutoff_candidates) if cutoff_candidates else None
     return {
+        "period": period,
         "summary": {
             "enterprise_count": len(enterprises),
             "store_count": len(stores),
@@ -287,24 +310,66 @@ def build_dashboard_snapshot(db: Session) -> dict[str, Any]:
     }
 
 
-def refresh_dashboard_projection(db: Session, *, commit: bool = True) -> dict[str, Any]:
-    snapshot = build_dashboard_snapshot(db)
-    cutoff = as_utc(snapshot.pop("data_cutoff"))
-    projection = db.get(DashboardProjection, "current")
-    if projection is None:
-        projection = DashboardProjection(id="current", snapshot=snapshot, data_cutoff=cutoff)
-        db.add(projection)
-    else:
-        projection.snapshot = snapshot
-        projection.data_cutoff = cutoff
-        projection.object_version += 1
-    if commit:
-        db.commit()
-    return {**snapshot, "data_cutoff": cutoff}
+def refresh_dashboard_projection(
+    db: Session,
+    period: str = "30d",
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
+    period_window(period)
+    projection_id = f"current:{period}"
+    last_conflict: BusinessError | None = None
+    for _ in range(3):
+        db.flush()
+        snapshot = build_dashboard_snapshot(db, period)
+        raw_cutoff = snapshot.pop("data_cutoff")
+        cutoff = as_utc(raw_cutoff) if raw_cutoff is not None else None
+        projection = db.scalar(
+            select(DashboardProjection)
+            .where(DashboardProjection.id == projection_id)
+            .execution_options(populate_existing=True)
+        )
+        if projection is None:
+            try:
+                with db.begin_nested():
+                    projection = DashboardProjection(id=projection_id, snapshot=snapshot, data_cutoff=cutoff)
+                    db.add(projection)
+                    db.flush()
+            except IntegrityError:
+                db.expire_all()
+                continue
+        else:
+            try:
+                atomic_versioned_update(
+                    db,
+                    DashboardProjection,
+                    projection.id,
+                    projection.object_version,
+                    {"snapshot": snapshot, "data_cutoff": cutoff},
+                )
+            except BusinessError as exc:
+                if exc.code != "VERSION_CONFLICT":
+                    raise
+                last_conflict = exc
+                db.expire_all()
+                continue
+        if commit:
+            db.commit()
+        return {**snapshot, "data_cutoff": cutoff}
+    if last_conflict is not None:
+        raise last_conflict
+    raise BusinessError("PROJECTION_CONFLICT", "看板投影正在刷新，请稍后重试", status_code=409)
 
 
-def read_dashboard_projection(db: Session) -> dict[str, Any] | None:
-    projection = db.get(DashboardProjection, "current")
+def read_dashboard_projection(db: Session, period: str = "30d") -> dict[str, Any] | None:
+    period_window(period)
+    projection = db.get(DashboardProjection, f"current:{period}")
     if projection is None:
         return None
-    return {**projection.snapshot, "data_cutoff": as_utc(projection.data_cutoff)}
+    cutoff = as_utc(projection.data_cutoff) if projection.data_cutoff is not None else None
+    return {**projection.snapshot, "data_cutoff": cutoff}
+
+
+def refresh_all_dashboard_projections(db: Session) -> None:
+    for index, period in enumerate(PERIOD_VALUES):
+        refresh_dashboard_projection(db, period, commit=index == len(PERIOD_VALUES) - 1)

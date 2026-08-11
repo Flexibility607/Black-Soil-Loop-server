@@ -35,10 +35,24 @@ async def business_error_handler(request: Request, exc: BusinessError) -> JSONRe
     )
 
 
-def version_conflict(current_version: int) -> BusinessError:
+def version_conflict(
+    current_version: int | None,
+    expected_version: int | None = None,
+    *,
+    object_type: str | None = None,
+    object_id: str | None = None,
+) -> BusinessError:
+    details: dict[str, Any] = {
+        "current_version": current_version,
+        "expected_version": expected_version,
+    }
+    if object_type is not None:
+        details["object_type"] = object_type
+    if object_id is not None:
+        details["object_id"] = object_id
     return BusinessError(
         "VERSION_CONFLICT",
         "数据已被其他操作更新，请刷新后重试",
         status_code=409,
-        details={"current_version": current_version, "expected_version": current_version},
+        details=details,
     )

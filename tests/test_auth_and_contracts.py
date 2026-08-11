@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.shared.dictionaries import TRANSPORT_STATUS_LABELS, enum_label
 from app.shared.models import IdempotencyRecord
 from tests.conftest import login
 
@@ -30,10 +31,36 @@ def test_openapi_contains_public_sse_mobile_ws_and_device_paths(b01_client, b02_
     b02_paths = b02_client.get("/openapi.json").json()["paths"]
     assert "/api/v1/dashboard/events" in b01_paths
     assert "/api/v1/public/dashboard/snapshot" in b01_paths
+    assert "/api/v1/public/dictionaries" in b01_paths
     assert "/api/v1/web/assistant/transcriptions" in b01_paths
     assert "/api/v1/web/transport/plans/{plan_id}/publish" in b01_paths
+    assert "/api/v1/web/telemetry-issues" in b01_paths
     assert "/api/v1/mobile/tasks/{task_id}/receipts" in b02_paths
     assert "/api/v1/device/telemetry" in b02_paths
+
+
+def test_public_dictionary_is_complete_and_unknown_values_have_chinese_fallback(b01_client):
+    response = b01_client.get("/api/v1/public/dictionaries")
+    assert response.status_code == 200, response.text
+    dictionaries = response.json()["dictionaries"]
+    assert dictionaries["modules"] == {
+        "B01": "网页管理与经营服务",
+        "B02": "移动履约与设备服务",
+        "E01": "园区管理台",
+        "E02": "公开产销协同大屏",
+    }
+    for name in (
+        "roles",
+        "alert_type",
+        "alert_status",
+        "transport_action",
+        "transport_status",
+        "algorithm_type",
+        "forecast_method",
+    ):
+        assert dictionaries[name]
+    assert dictionaries["unknown_fallback"] == "未知类型（原值）"
+    assert enum_label(TRANSPORT_STATUS_LABELS, "FUTURE_STATE") == "未知类型（FUTURE_STATE）"
 
 
 def test_all_errors_use_contract_envelope(b01_client):
@@ -59,6 +86,7 @@ def test_dashboard_units_deterministic_assistant_and_optional_transcription(b01_
     assert answer.status_code == 200, answer.text
     assert answer.json()["mode"] == "deterministic"
     assert answer.json()["chart"]["type"] == "donut"
+    assert answer.json()["allowed_chart_types"] == ["bar", "line", "donut", "route"]
 
     transcription = b01_client.post(
         "/api/v1/web/assistant/transcriptions",
