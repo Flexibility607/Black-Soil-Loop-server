@@ -15,9 +15,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.domain.algorithm_presentation import carpool_presentation, warehouse_presentation
 from app.domain.algorithms import forecast_demand, run_carpool, run_procurement, run_warehouse_pool
 from app.domain.assistant import answer_data_question
 from app.domain.dashboard import read_dashboard_projection, refresh_dashboard_projection
+from app.domain.dashboard_information import public_information
 from app.domain.forecasts import (
     forecast_projection_data,
     generate_next_week_forecasts,
@@ -319,7 +321,8 @@ def carpool_preview(
     _: User = Depends(require_roles("park_admin")),
 ) -> dict:
     orders = _selected_orders(db, payload)
-    result = run_carpool(orders, list(db.scalars(select(Vehicle))))
+    vehicles = list(db.scalars(select(Vehicle)))
+    result = run_carpool(orders, vehicles)
     run = AlgorithmRun(
         algorithm_type="CARPOOL",
         scenario_code=payload.scenario_code,
@@ -331,12 +334,23 @@ def carpool_preview(
         output_snapshot=result,
     )
     db.add(run)
+    db.flush()
+    add_outbox(
+        db,
+        "algorithm.run.completed",
+        "algorithm_run",
+        run.id,
+        1,
+        {"algorithm_type": "CARPOOL", "showcase": False},
+    )
     db.commit()
+    presentation = carpool_presentation(db, orders, vehicles, result)
     return api_payload(
         request,
         match_run_id=run.id,
         algorithm_type="CARPOOL",
         algorithm_type_label=enum_label(ALGORITHM_TYPE_LABELS, "CARPOOL"),
+        presentation=presentation,
         **result,
     )
 
@@ -349,7 +363,8 @@ def warehouse_preview(
     _: User = Depends(require_roles("park_admin", "enterprise_admin")),
 ) -> dict:
     orders = _selected_orders(db, payload)
-    result = run_warehouse_pool(orders, list(db.scalars(select(Warehouse))))
+    warehouses = list(db.scalars(select(Warehouse)))
+    result = run_warehouse_pool(orders, warehouses)
     run = AlgorithmRun(
         algorithm_type="WAREHOUSE",
         scenario_code=payload.scenario_code,
@@ -361,20 +376,29 @@ def warehouse_preview(
         output_snapshot=result,
     )
     db.add(run)
+    db.flush()
+    add_outbox(
+        db,
+        "algorithm.run.completed",
+        "algorithm_run",
+        run.id,
+        1,
+        {"algorithm_type": "WAREHOUSE", "showcase": False},
+    )
     db.commit()
+    presentation = warehouse_presentation(orders, warehouses, result)
     return api_payload(
         request,
         match_run_id=run.id,
         algorithm_type="WAREHOUSE",
         algorithm_type_label=enum_label(ALGORITHM_TYPE_LABELS, "WAREHOUSE"),
+        presentation=presentation,
         **result,
     )
 
 
 def _warehouse_plan_data(db: Session, plan: WarehousePoolPlan) -> dict[str, Any]:
-    reservation = db.scalar(
-        select(WarehouseReservation).where(WarehouseReservation.warehouse_pool_plan_id == plan.id)
-    )
+    reservation = db.scalar(select(WarehouseReservation).where(WarehouseReservation.warehouse_pool_plan_id == plan.id))
     warehouse = db.get(Warehouse, plan.warehouse_id)
     return {
         **_model_item(
@@ -767,9 +791,7 @@ def confirm_carpool(
     if len(candidate_ids) != len(candidate["order_ids"]):
         raise BusinessError("CANDIDATE_ORDER_DUPLICATED", "候选方案包含重复订单", status_code=409)
     orders = list(
-        db.scalars(
-            select(TransportOrder).where(TransportOrder.id.in_(candidate_ids)).order_by(TransportOrder.id)
-        )
+        db.scalars(select(TransportOrder).where(TransportOrder.id.in_(candidate_ids)).order_by(TransportOrder.id))
     )
     if len(orders) != len(candidate_ids):
         raise BusinessError("CANDIDATE_ORDER_MISSING", "候选方案中的订单已不存在", status_code=409)
@@ -1061,12 +1083,12 @@ def _operation_page(
     )
     store_ids = {row.store_id for row in rows}
     product_ids = {row.product_id for row in rows if hasattr(row, "product_id")}
-    stores = {
-        item.id: item for item in db.scalars(select(Store).where(Store.id.in_(store_ids)))
-    } if store_ids else {}
-    products = {
-        item.id: item for item in db.scalars(select(Product).where(Product.id.in_(product_ids)))
-    } if product_ids else {}
+    stores = {item.id: item for item in db.scalars(select(Store).where(Store.id.in_(store_ids)))} if store_ids else {}
+    products = (
+        {item.id: item for item in db.scalars(select(Product).where(Product.id.in_(product_ids)))}
+        if product_ids
+        else {}
+    )
     items = []
     for row in rows:
         item = _model_item(row, fields)
@@ -1266,6 +1288,7 @@ def projected_operations_summary(
     user: User = Depends(require_roles("park_admin", "enterprise_admin")),
 ) -> dict:
     summary = operations_summary(db, user, period)
+    summary.update(currency="CNY", sales_amount_unit="yuan", order_count_unit="单")
     cutoff = summary.pop("data_cutoff")
     payload = api_payload(request, data_cutoff=cutoff, **summary)
     payload.setdefault("data_cutoff", None)
@@ -1880,6 +1903,66 @@ def public_snapshot(
     return _dashboard_payload(request, snapshot)
 
 
+def _information_response(
+    request: Request,
+    *,
+    kind: str,
+    limit: int,
+    legacy: bool = False,
+) -> Response | dict:
+    if not get_settings().public_information_enabled:
+        raise BusinessError(
+            "PUBLIC_INFORMATION_UNAVAILABLE",
+            "园区资讯功能正在更新",
+            status_code=503,
+        )
+    try:
+        result = public_information(kind, limit)
+    except (OSError, ValueError) as exc:
+        logger.warning("public information catalog unavailable: %s", type(exc).__name__)
+        raise BusinessError(
+            "PUBLIC_INFORMATION_UNAVAILABLE",
+            "园区资讯暂不可用",
+            status_code=503,
+        ) from exc
+    etag = result.pop("etag")
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+        "Vary": "Accept-Encoding",
+    }
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers=headers)
+    cutoff = result.pop("data_cutoff")
+    if legacy:
+        result = {"data": result.pop("items"), **result}
+    payload = api_payload(request, data_cutoff=cutoff, **result)
+    return Response(
+        content=json.dumps(jsonable_encoder(payload), ensure_ascii=False),
+        media_type="application/json",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/public/dashboard/information", tags=["公开大屏"], response_model=None)
+def dashboard_information(
+    request: Request,
+    kind: str = Query("all", pattern="^(all|news|policy)$"),
+    limit: int = Query(8, ge=1, le=20),
+) -> Response | dict:
+    return _information_response(request, kind=kind, limit=limit)
+
+
+@app.get("/api/v1/public/dashboard/news", tags=["公开大屏"], response_model=None)
+def dashboard_news(request: Request, limit: int = Query(6, ge=1, le=20)) -> Response | dict:
+    return _information_response(request, kind="news", limit=limit, legacy=True)
+
+
+@app.get("/api/v1/public/dashboard/policies", tags=["公开大屏"], response_model=None)
+def dashboard_policies(request: Request, limit: int = Query(6, ge=1, le=20)) -> Response | dict:
+    return _information_response(request, kind="policy", limit=limit, legacy=True)
+
+
 @app.post(f"{WEB}/assistant/query", tags=["数据助手"])
 def assistant_query(
     payload: AssistantQuery,
@@ -2095,7 +2178,11 @@ async def dashboard_events(request: Request, cursor: int = Query(0, ge=0)) -> St
                 events = list(
                     db.scalars(
                         select(OutboxEvent)
-                        .where(OutboxEvent.sequence > cursor)
+                        .where(
+                            OutboxEvent.sequence > cursor,
+                            OutboxEvent.topic == "dashboard.snapshot.updated",
+                            OutboxEvent.status == "PUBLISHED",
+                        )
                         .order_by(OutboxEvent.sequence)
                         .limit(100)
                     )
@@ -2106,10 +2193,9 @@ async def dashboard_events(request: Request, cursor: int = Query(0, ge=0)) -> St
                     body = {
                         "event_id": event.event_id,
                         "topic": event.topic,
-                        "object_type": event.object_type,
-                        "object_id": event.object_id,
-                        "object_version": event.object_version,
-                        "payload": event.payload,
+                        "targets": event.payload.get("targets", []),
+                        "kinds": event.payload.get("kinds", []),
+                        "periods": event.payload.get("periods", []),
                         "created_at": event.created_at.isoformat(),
                     }
                     serialized = json.dumps(body, ensure_ascii=False)

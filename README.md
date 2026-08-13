@@ -64,6 +64,25 @@ VOICE_RATE_LIMIT_HMAC_SECRET=
 
 登录转写接口仍允许省略 `duration_seconds`、`client_request_id` 与 `Idempotency-Key`，由服务器从 WAV 和 UUID 安全补齐；音频格式统一收敛为上述 PCM WAV。匿名接口要求表单 `duration_seconds`、`client_request_id` 与同值 UUID `Idempotency-Key`。
 
+## E02 长春展示配置
+
+长春地图、园区资讯和预设算法展示采用安全关闭的功能开关：
+
+```dotenv
+DASHBOARD_MAP_MODE=legacy
+PUBLIC_INFORMATION_ENABLED=false
+ALGORITHM_SHOWCASE_ENABLED=false
+MAP_LOCATION_DELAYED_MINUTES=10
+MAP_LOCATION_STALE_MINUTES=30
+```
+
+服务器升级到 Alembic `20260813_0013` 后，先执行 `python -m scripts.validate_e02_catalogs`，再以 dry-run 校验地图目录和三组场景。地图目录仅允许 worker/migration 角色写入；预设场景命令只保存派生的 `AlgorithmRun` 与 Outbox，不创建订单、运输任务、仓库预占或库存变更。网页兼容新旧快照后，才可将三个展示开关切换为 `changchun/true/true` 并重启 B01 与 Worker。匿名语音开关不随展示功能开启。
+
+```powershell
+python -m scripts.import_dashboard_map_catalog --dry-run --catalog app/content/e02-map-points.v1.json
+python -m scripts.generate_algorithm_showcase --check --batch-key e02-changchun-20260813
+```
+
 ## 质量检查
 
 ```powershell
@@ -72,6 +91,7 @@ VOICE_RATE_LIMIT_HMAC_SECRET=
 .\.venv\Scripts\python.exe -m scripts.export_contracts
 .\.venv\Scripts\python.exe -m scripts.check_contracts
 .\.venv\Scripts\python.exe -m pytest tests/test_voice_assistant.py tests/test_postgres_permissions.py
+.\.venv\Scripts\python.exe -m scripts.validate_e02_catalogs
 ```
 
 GitHub Actions 使用 PostgreSQL 16，从空库连续执行两次 Alembic 升级，并验证 B01/B02 数据库角色边界。SQLite 只用于快速本地单元测试。

@@ -1,0 +1,75 @@
+{
+  "catalog_version": "2026-08-13.1",
+  "source_mode": "PRESET_SIMULATION",
+  "scenarios": [
+    {
+      "scenario_code": "SCENARIO_1",
+      "public_key": "city-morning-delivery",
+      "title": "长春市区门店晨间联合配送",
+      "description": "多企业、多品类订单在07:00至07:45集中发车，按温区、载重和容积形成联合配送组。",
+      "service_area": "长春市及近郊",
+      "orders": [
+        {"order_key":"city-01","enterprise_name":"长春吉品面点企业","product_name":"速冻水饺","store_name":"柏记水饺临河街店","origin_latitude":43.8570,"origin_longitude":125.3410,"destination_latitude":43.8469,"destination_longitude":125.3692,"departure_at":"2026-08-14T07:00:00+08:00","warehouse_inbound_start":"2026-08-14T05:50:00+08:00","warehouse_inbound_end":"2026-08-14T06:20:00+08:00","warehouse_outbound_start":"2026-08-14T06:25:00+08:00","warehouse_outbound_end":"2026-08-14T06:50:00+08:00","quantity":320,"unit":"公斤","weight_kg":320,"volume_m3":1.8,"temperature_zone":"FROZEN"},
+        {"order_key":"city-02","enterprise_name":"净月优鲜食品企业","product_name":"冷冻玉米","store_name":"柏记水饺新星宇观塘店","origin_latitude":43.8505,"origin_longitude":125.3520,"destination_latitude":43.8012,"destination_longitude":125.3862,"departure_at":"2026-08-14T07:12:00+08:00","warehouse_inbound_start":"2026-08-14T05:55:00+08:00","warehouse_inbound_end":"2026-08-14T06:25:00+08:00","warehouse_outbound_start":"2026-08-14T06:30:00+08:00","warehouse_outbound_end":"2026-08-14T06:55:00+08:00","quantity":280,"unit":"公斤","weight_kg":280,"volume_m3":1.5,"temperature_zone":"FROZEN"},
+        {"order_key":"city-03","enterprise_name":"黑土循环农产品企业","product_name":"速冻豆角","store_name":"鹤记生煎富锦路店","origin_latitude":43.8620,"origin_longitude":125.3300,"destination_latitude":43.8662,"destination_longitude":125.3037,"departure_at":"2026-08-14T07:24:00+08:00","warehouse_inbound_start":"2026-08-14T06:00:00+08:00","warehouse_inbound_end":"2026-08-14T06:30:00+08:00","warehouse_outbound_start":"2026-08-14T06:30:00+08:00","warehouse_outbound_end":"2026-08-14T06:55:00+08:00","quantity":260,"unit":"公斤","weight_kg":260,"volume_m3":1.4,"temperature_zone":"FROZEN"},
+        {"order_key":"city-04","enterprise_name":"长春吉品面点企业","product_name":"鲜切蔬菜","store_name":"这有山","origin_latitude":43.8450,"origin_longitude":125.3600,"destination_latitude":43.86884,"destination_longitude":125.28612,"departure_at":"2026-08-14T07:08:00+08:00","warehouse_inbound_start":"2026-08-14T05:50:00+08:00","warehouse_inbound_end":"2026-08-14T06:20:00+08:00","warehouse_outbound_start":"2026-08-14T06:25:00+08:00","warehouse_outbound_end":"2026-08-14T06:50:00+08:00","quantity":240,"unit":"公斤","weight_kg":240,"volume_m3":1.7,"temperature_zone":"CHILLED"},
+        {"order_key":"city-05","enterprise_name":"净月优鲜食品企业","product_name":"低温乳品","store_name":"鹤记生煎欧亚万豪店","origin_latitude":43.8510,"origin_longitude":125.3700,"destination_latitude":43.8736,"destination_longitude":125.4318,"departure_at":"2026-08-14T07:22:00+08:00","warehouse_inbound_start":"2026-08-14T05:55:00+08:00","warehouse_inbound_end":"2026-08-14T06:25:00+08:00","warehouse_outbound_start":"2026-08-14T06:30:00+08:00","warehouse_outbound_end":"2026-08-14T06:55:00+08:00","quantity":210,"unit":"公斤","weight_kg":210,"volume_m3":1.6,"temperature_zone":"CHILLED"},
+        {"order_key":"city-06","enterprise_name":"黑土循环农产品企业","product_name":"鲜切蔬菜","store_name":"大食味（演示门店）","origin_latitude":43.8580,"origin_longitude":125.3550,"destination_latitude":43.8450,"destination_longitude":125.3500,"departure_at":"2026-08-14T07:38:00+08:00","warehouse_inbound_start":"2026-08-14T06:00:00+08:00","warehouse_inbound_end":"2026-08-14T06:30:00+08:00","warehouse_outbound_start":"2026-08-14T06:30:00+08:00","warehouse_outbound_end":"2026-08-14T06:55:00+08:00","quantity":190,"unit":"公斤","weight_kg":190,"volume_m3":1.3,"temperature_zone":"CHILLED"}
+      ],
+      "vehicles": [
+        {"vehicle_key":"city-frozen-7t","temperature_zone":"FROZEN","max_weight_kg":7000,"max_volume_m3":18},
+        {"vehicle_key":"city-chilled-5t","temperature_zone":"CHILLED","max_weight_kg":5000,"max_volume_m3":14}
+      ],
+      "warehouses": [
+        {"warehouse_key":"city-frozen-hub","name":"长春市区冷冻共享仓","temperature_zone":"FROZEN","latitude":43.8520,"longitude":125.3520,"capacity_m3":120,"used_m3":36,"reserved_m3":8},
+        {"warehouse_key":"city-chilled-hub","name":"长春市区冷藏共享仓","temperature_zone":"CHILLED","latitude":43.8480,"longitude":125.3650,"capacity_m3":100,"used_m3":28,"reserved_m3":6}
+      ]
+    },
+    {
+      "scenario_code": "SCENARIO_2",
+      "public_key": "jingyue-cold-chain",
+      "title": "净月片区冷链错峰补货",
+      "description": "冷藏和冷冻订单在08:00至08:45错峰联配，同时核验入出仓时间窗、到仓距离和库容红线。",
+      "service_area": "长春市及近郊",
+      "orders": [
+        {"order_key":"jingyue-01","enterprise_name":"净月冷链食品企业","product_name":"冷鲜肉","store_name":"净月潭","origin_latitude":43.8200,"origin_longitude":125.4100,"destination_latitude":43.79942,"destination_longitude":125.44888,"departure_at":"2026-08-14T08:00:00+08:00","warehouse_inbound_start":"2026-08-14T06:40:00+08:00","warehouse_inbound_end":"2026-08-14T07:15:00+08:00","warehouse_outbound_start":"2026-08-14T07:20:00+08:00","warehouse_outbound_end":"2026-08-14T07:50:00+08:00","quantity":360,"unit":"公斤","weight_kg":360,"volume_m3":2.1,"temperature_zone":"CHILLED"},
+        {"order_key":"jingyue-02","enterprise_name":"长春吉品面点企业","product_name":"低温乳品","store_name":"柏记水饺新星宇观塘店","origin_latitude":43.8140,"origin_longitude":125.4220,"destination_latitude":43.8012,"destination_longitude":125.3862,"departure_at":"2026-08-14T08:14:00+08:00","warehouse_inbound_start":"2026-08-14T06:45:00+08:00","warehouse_inbound_end":"2026-08-14T07:20:00+08:00","warehouse_outbound_start":"2026-08-14T07:25:00+08:00","warehouse_outbound_end":"2026-08-14T07:55:00+08:00","quantity":300,"unit":"公斤","weight_kg":300,"volume_m3":1.8,"temperature_zone":"CHILLED"},
+        {"order_key":"jingyue-03","enterprise_name":"黑土循环农产品企业","product_name":"鲜食菌菇","store_name":"国信南山温泉","origin_latitude":43.8060,"origin_longitude":125.4380,"destination_latitude":43.68356,"destination_longitude":125.52170,"departure_at":"2026-08-14T08:28:00+08:00","warehouse_inbound_start":"2026-08-14T06:50:00+08:00","warehouse_inbound_end":"2026-08-14T07:20:00+08:00","warehouse_outbound_start":"2026-08-14T07:25:00+08:00","warehouse_outbound_end":"2026-08-14T07:55:00+08:00","quantity":260,"unit":"公斤","weight_kg":260,"volume_m3":1.7,"temperature_zone":"CHILLED"},
+        {"order_key":"jingyue-04","enterprise_name":"净月冷链食品企业","product_name":"速冻水饺","store_name":"净月潭","origin_latitude":43.8180,"origin_longitude":125.4140,"destination_latitude":43.79942,"destination_longitude":125.44888,"departure_at":"2026-08-14T08:06:00+08:00","warehouse_inbound_start":"2026-08-14T06:40:00+08:00","warehouse_inbound_end":"2026-08-14T07:15:00+08:00","warehouse_outbound_start":"2026-08-14T07:20:00+08:00","warehouse_outbound_end":"2026-08-14T07:50:00+08:00","quantity":340,"unit":"公斤","weight_kg":340,"volume_m3":1.9,"temperature_zone":"FROZEN"},
+        {"order_key":"jingyue-05","enterprise_name":"长春吉品面点企业","product_name":"冷冻玉米","store_name":"这有山","origin_latitude":43.8120,"origin_longitude":125.4250,"destination_latitude":43.86884,"destination_longitude":125.28612,"departure_at":"2026-08-14T08:20:00+08:00","warehouse_inbound_start":"2026-08-14T06:45:00+08:00","warehouse_inbound_end":"2026-08-14T07:20:00+08:00","warehouse_outbound_start":"2026-08-14T07:25:00+08:00","warehouse_outbound_end":"2026-08-14T07:55:00+08:00","quantity":290,"unit":"公斤","weight_kg":290,"volume_m3":1.6,"temperature_zone":"FROZEN"},
+        {"order_key":"jingyue-06","enterprise_name":"黑土循环农产品企业","product_name":"冷冻玉米","store_name":"鹤记生煎欧亚万豪店","origin_latitude":43.8080,"origin_longitude":125.4310,"destination_latitude":43.8736,"destination_longitude":125.4318,"departure_at":"2026-08-14T08:40:00+08:00","warehouse_inbound_start":"2026-08-14T06:50:00+08:00","warehouse_inbound_end":"2026-08-14T07:20:00+08:00","warehouse_outbound_start":"2026-08-14T07:25:00+08:00","warehouse_outbound_end":"2026-08-14T07:55:00+08:00","quantity":230,"unit":"公斤","weight_kg":230,"volume_m3":1.4,"temperature_zone":"FROZEN"}
+      ],
+      "vehicles": [
+        {"vehicle_key":"jingyue-chilled-7t","temperature_zone":"CHILLED","max_weight_kg":7000,"max_volume_m3":18},
+        {"vehicle_key":"jingyue-frozen-7t","temperature_zone":"FROZEN","max_weight_kg":7000,"max_volume_m3":18}
+      ],
+      "warehouses": [
+        {"warehouse_key":"jingyue-chilled-hub","name":"净月冷藏共享仓","temperature_zone":"CHILLED","latitude":43.8140,"longitude":125.4260,"capacity_m3":130,"used_m3":42,"reserved_m3":9},
+        {"warehouse_key":"jingyue-frozen-hub","name":"净月冷冻共享仓","temperature_zone":"FROZEN","latitude":43.8160,"longitude":125.4200,"capacity_m3":125,"used_m3":40,"reserved_m3":8}
+      ]
+    },
+    {
+      "scenario_code": "SCENARIO_3",
+      "public_key": "suburban-third-space",
+      "title": "长春市郊第三空间集中补货",
+      "description": "第三空间为主的多站订单在09:00至09:45合单，突出站点分配、车辆利用率、绕行和里程收益。",
+      "service_area": "长春市及近郊",
+      "orders": [
+        {"order_key":"suburban-01","enterprise_name":"黑土循环农产品企业","product_name":"鲜切蔬菜","store_name":"国信南山温泉","origin_latitude":43.7540,"origin_longitude":125.4450,"destination_latitude":43.68356,"destination_longitude":125.52170,"departure_at":"2026-08-14T09:00:00+08:00","warehouse_inbound_start":"2026-08-14T07:30:00+08:00","warehouse_inbound_end":"2026-08-14T08:05:00+08:00","warehouse_outbound_start":"2026-08-14T08:10:00+08:00","warehouse_outbound_end":"2026-08-14T08:45:00+08:00","quantity":420,"unit":"公斤","weight_kg":420,"volume_m3":2.5,"temperature_zone":"CHILLED"},
+        {"order_key":"suburban-02","enterprise_name":"净月优鲜食品企业","product_name":"低温乳品","store_name":"净月潭","origin_latitude":43.7620,"origin_longitude":125.4320,"destination_latitude":43.79942,"destination_longitude":125.44888,"departure_at":"2026-08-14T09:12:00+08:00","warehouse_inbound_start":"2026-08-14T07:35:00+08:00","warehouse_inbound_end":"2026-08-14T08:10:00+08:00","warehouse_outbound_start":"2026-08-14T08:15:00+08:00","warehouse_outbound_end":"2026-08-14T08:50:00+08:00","quantity":350,"unit":"公斤","weight_kg":350,"volume_m3":2.1,"temperature_zone":"CHILLED"},
+        {"order_key":"suburban-03","enterprise_name":"长春吉品面点企业","product_name":"鲜食菌菇","store_name":"这有山","origin_latitude":43.7700,"origin_longitude":125.4380,"destination_latitude":43.86884,"destination_longitude":125.28612,"departure_at":"2026-08-14T09:26:00+08:00","warehouse_inbound_start":"2026-08-14T07:40:00+08:00","warehouse_inbound_end":"2026-08-14T08:10:00+08:00","warehouse_outbound_start":"2026-08-14T08:15:00+08:00","warehouse_outbound_end":"2026-08-14T08:50:00+08:00","quantity":310,"unit":"公斤","weight_kg":310,"volume_m3":1.9,"temperature_zone":"CHILLED"},
+        {"order_key":"suburban-04","enterprise_name":"黑土循环农产品企业","product_name":"速冻水饺","store_name":"国信南山温泉","origin_latitude":43.7560,"origin_longitude":125.4480,"destination_latitude":43.68356,"destination_longitude":125.52170,"departure_at":"2026-08-14T09:08:00+08:00","warehouse_inbound_start":"2026-08-14T07:30:00+08:00","warehouse_inbound_end":"2026-08-14T08:05:00+08:00","warehouse_outbound_start":"2026-08-14T08:10:00+08:00","warehouse_outbound_end":"2026-08-14T08:45:00+08:00","quantity":390,"unit":"公斤","weight_kg":390,"volume_m3":2.2,"temperature_zone":"FROZEN"},
+        {"order_key":"suburban-05","enterprise_name":"净月优鲜食品企业","product_name":"冷冻玉米","store_name":"净月潭","origin_latitude":43.7640,"origin_longitude":125.4350,"destination_latitude":43.79942,"destination_longitude":125.44888,"departure_at":"2026-08-14T09:20:00+08:00","warehouse_inbound_start":"2026-08-14T07:35:00+08:00","warehouse_inbound_end":"2026-08-14T08:10:00+08:00","warehouse_outbound_start":"2026-08-14T08:15:00+08:00","warehouse_outbound_end":"2026-08-14T08:50:00+08:00","quantity":330,"unit":"公斤","weight_kg":330,"volume_m3":1.8,"temperature_zone":"FROZEN"},
+        {"order_key":"suburban-06","enterprise_name":"长春吉品面点企业","product_name":"速冻豆角","store_name":"大食味（演示门店）","origin_latitude":43.7720,"origin_longitude":125.4410,"destination_latitude":43.8450,"destination_longitude":125.3500,"departure_at":"2026-08-14T09:42:00+08:00","warehouse_inbound_start":"2026-08-14T07:40:00+08:00","warehouse_inbound_end":"2026-08-14T08:10:00+08:00","warehouse_outbound_start":"2026-08-14T08:15:00+08:00","warehouse_outbound_end":"2026-08-14T08:50:00+08:00","quantity":270,"unit":"公斤","weight_kg":270,"volume_m3":1.6,"temperature_zone":"FROZEN"}
+      ],
+      "vehicles": [
+        {"vehicle_key":"suburban-chilled-7t","temperature_zone":"CHILLED","max_weight_kg":7000,"max_volume_m3":20},
+        {"vehicle_key":"suburban-frozen-7t","temperature_zone":"FROZEN","max_weight_kg":7000,"max_volume_m3":20}
+      ],
+      "warehouses": [
+        {"warehouse_key":"suburban-chilled-hub","name":"净月南部冷藏共享仓","temperature_zone":"CHILLED","latitude":43.7600,"longitude":125.4400,"capacity_m3":150,"used_m3":48,"reserved_m3":10},
+        {"warehouse_key":"suburban-frozen-hub","name":"净月南部冷冻共享仓","temperature_zone":"FROZEN","latitude":43.7580,"longitude":125.4440,"capacity_m3":145,"used_m3":46,"reserved_m3":9}
+      ]
+    }
+  ]
+}

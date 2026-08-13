@@ -62,6 +62,12 @@ sudo deploy/deploy-web-release.sh <版本号> <web-dist.tar.gz>
 
 Nginx 的两个转写精确路径限制请求体并关闭请求缓冲，防止合法录音落入 `client_body_temp`。应用仅使用经可信 Nginx/Uvicorn 代理链规范化后的 `request.client.host` 生成 HMAC 主体；不得在应用层直接信任客户端提交的 `X-Forwarded-For` 或 `CF-Connecting-IP`。Cloudflare 地址段变化时应先从官方地址清单核验并更新 Nginx 配置。
 
+## E02 展示受控启用
+
+`20260813_0013` 只新增地图目录表和算法展示元数据，不重写历史门店、任务、位置或日报。部署代码时保持 `DASHBOARD_MAP_MODE=legacy`、`PUBLIC_INFORMATION_ENABLED=false`、`ALGORITHM_SHOWCASE_ENABLED=false`；迁移和角色授权完成后依次执行目录总校验、地图 dry-run/apply、预设场景 check/apply，再检查 7d、30d、month 三份投影。公开 DTO 通过 UUID 与禁止字段扫描、网页已兼容 v2 地图后，方可启用三个开关并仅重启 B01 与 Worker。
+
+预设场景明确属于测算展示，只会创建派生 AlgorithmRun 和 Outbox。命令不得创建真实运输订单、确认方案、预占仓库、发布任务或修改库存。回滚时先恢复 `legacy/false/false` 并刷新三周期投影；0013 保持向前，不执行生产 downgrade。
+
 ## 验证
 
 ```bash

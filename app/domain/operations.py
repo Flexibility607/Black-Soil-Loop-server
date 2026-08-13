@@ -276,6 +276,9 @@ def operations_summary(db: Session, user: User, period: str = "30d") -> dict[str
     return {
         "period": period,
         "unit": "综合指标",
+        "currency": "CNY",
+        "sales_amount_unit": "yuan",
+        "order_count_unit": "单",
         "data_cutoff": max(cutoff_candidates) if cutoff_candidates else None,
         "receipts": {
             "unit": "单",

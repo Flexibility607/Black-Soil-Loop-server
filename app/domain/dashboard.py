@@ -8,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.domain.dashboard_map import build_public_map
+from app.domain.dashboard_showcase import build_algorithm_showcase
+from app.shared.config import get_settings
 from app.shared.errors import BusinessError
 from app.shared.models import (
     Alert,
@@ -196,8 +199,38 @@ def build_dashboard_snapshot(db: Session, period: str = "30d") -> dict[str, Any]
         + [as_utc(location.recorded_at) for location in latest_locations]
     )
     data_cutoff = max(cutoff_candidates) if cutoff_candidates else None
+    settings = get_settings()
+    legacy_map = {
+        "stores": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "channel": item.channel,
+                "latitude": item.latitude,
+                "longitude": item.longitude,
+            }
+            for item in stores.values()
+        ],
+        "routes": route_items,
+    }
+    dashboard_map = {**legacy_map, **build_public_map(db)} if settings.dashboard_map_mode == "changchun" else legacy_map
+    showcase = (
+        build_algorithm_showcase(db)
+        if settings.algorithm_showcase_enabled
+        else {
+            "schema_version": "1.0",
+            "status": "WAITING",
+            "status_label": "功能暂未启用",
+            "data_cutoff": None,
+            "data_cutoff_note": "协同运算方案展示尚未启用",
+            "panels": [],
+        }
+    )
     return {
         "period": period,
+        "currency": "CNY",
+        "sales_amount_unit": "yuan",
+        "order_count_unit": "单",
         "summary": {
             "enterprise_count": len(enterprises),
             "store_count": len(stores),
@@ -221,8 +254,7 @@ def build_dashboard_snapshot(db: Session, period: str = "30d") -> dict[str, Any]
                 for (day, channel_name, unit), quantity in sorted(daily_demand_by_unit.items())
             ],
             "preorders_by_channel": [
-                {"channel": channel_name, "count": count}
-                for channel_name, count in sorted(preorder_by_channel.items())
+                {"channel": channel_name, "count": count} for channel_name, count in sorted(preorder_by_channel.items())
             ],
             "daily_preorders_by_channel": [
                 {"date": day, "channel": channel_name, "count": count}
@@ -270,19 +302,8 @@ def build_dashboard_snapshot(db: Session, period: str = "30d") -> dict[str, Any]
             ],
             "transport_status": [{"status": key, "count": value} for key, value in transport_counts.items()],
         },
-        "map": {
-            "stores": [
-                {
-                    "id": item.id,
-                    "name": item.name,
-                    "channel": item.channel,
-                    "latitude": item.latitude,
-                    "longitude": item.longitude,
-                }
-                for item in stores.values()
-            ],
-            "routes": route_items,
-        },
+        "map": dashboard_map,
+        "algorithm_showcase": showcase,
         "alerts": [
             {
                 "id": item.id,
@@ -370,6 +391,10 @@ def read_dashboard_projection(db: Session, period: str = "30d") -> dict[str, Any
     return {**projection.snapshot, "data_cutoff": cutoff}
 
 
-def refresh_all_dashboard_projections(db: Session) -> None:
+def refresh_all_dashboard_projections(db: Session, *, commit: bool = True) -> None:
     for index, period in enumerate(PERIOD_VALUES):
-        refresh_dashboard_projection(db, period, commit=index == len(PERIOD_VALUES) - 1)
+        refresh_dashboard_projection(
+            db,
+            period,
+            commit=commit and index == len(PERIOD_VALUES) - 1,
+        )

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     auth_rate_limit_per_minute: int = 20
     device_rate_limit_per_minute: int = 600
     demo_seed_password: str = "Demo-Change-Me-2026"
+    dashboard_map_mode: str = "legacy"
+    algorithm_showcase_enabled: bool = False
+    public_information_enabled: bool = False
+    map_location_delayed_minutes: int = 10
+    map_location_stale_minutes: int = 30
 
     @field_validator("jwt_secret")
     @classmethod
@@ -68,6 +73,14 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"aliyun", "openai"}:
             raise ValueError("VOICE_STT_PROVIDER 仅支持 aliyun 或 openai")
+        return normalized
+
+    @field_validator("dashboard_map_mode")
+    @classmethod
+    def validate_dashboard_map_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"legacy", "changchun"}:
+            raise ValueError("DASHBOARD_MAP_MODE 仅支持 legacy 或 changchun")
         return normalized
 
     @model_validator(mode="after")
@@ -100,6 +113,10 @@ class Settings(BaseSettings):
             raise ValueError("VOICE_PUBLIC_ENABLED 需要同时启用 ASSISTANT_PUBLIC_DB_QUOTA_ENABLED")
         if self.is_production and self.voice_public_enabled and self.voice_stt_provider != "aliyun":
             raise ValueError("生产匿名语音转写必须使用 aliyun provider")
+        if self.map_location_delayed_minutes <= 0:
+            raise ValueError("MAP_LOCATION_DELAYED_MINUTES 必须为正整数")
+        if self.map_location_stale_minutes <= self.map_location_delayed_minutes:
+            raise ValueError("MAP_LOCATION_STALE_MINUTES 必须大于延迟阈值")
         # Credentials are checked by the affected endpoint. A missing or
         # malformed secret must fail that request closed without preventing B01,
         # SSE, dashboards, or the deterministic text assistant from starting.

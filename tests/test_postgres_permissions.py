@@ -16,7 +16,13 @@ def test_b01_b02_database_role_boundaries():
     with b01.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM b01.transport_orders")) >= 0
         assert connection.scalar(text("SELECT count(*) FROM b01.voice_quota_buckets")) >= 0
+        assert connection.scalar(text("SELECT count(*) FROM b01.dashboard_map_points")) >= 0
         connection.commit()
+        with pytest.raises(DBAPIError):
+            connection.execute(
+                text("UPDATE b01.dashboard_map_points SET display_name = display_name")
+            )
+        connection.rollback()
         transaction = connection.begin()
         quota_id = str(uuid4())
         connection.execute(
@@ -51,8 +57,18 @@ def test_b01_b02_database_role_boundaries():
         connection.rollback()
         with pytest.raises(DBAPIError):
             connection.execute(text("SELECT transcript FROM b01.voice_transcription_requests"))
+        connection.rollback()
+        with pytest.raises(DBAPIError):
+            connection.execute(text("SELECT display_name FROM b01.dashboard_map_points"))
     with worker.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM b01.voice_transcription_requests")) >= 0
+        assert connection.scalar(text("SELECT count(*) FROM b01.dashboard_map_points")) >= 0
+        assert connection.scalar(
+            text(
+                "SELECT has_table_privilege(current_user, "
+                "'b01.dashboard_map_points', 'INSERT,UPDATE,DELETE')"
+            )
+        )
         connection.commit()
         transaction = connection.begin()
         request_id = str(uuid4())

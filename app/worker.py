@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
@@ -37,9 +37,7 @@ WAREHOUSE_RESERVATION_TTL = timedelta(minutes=30)
 
 def _create_execution_task(db: Session, event: OutboxEvent) -> None:
     plan = db.scalar(
-        select(TransportPlan)
-        .where(TransportPlan.id == event.object_id)
-        .execution_options(populate_existing=True)
+        select(TransportPlan).where(TransportPlan.id == event.object_id).execution_options(populate_existing=True)
     )
     if not plan or plan.task_id:
         return
@@ -104,9 +102,7 @@ def _create_execution_task(db: Session, event: OutboxEvent) -> None:
 
 def _publish_execution_task(db: Session, event: OutboxEvent) -> None:
     plan = db.scalar(
-        select(TransportPlan)
-        .where(TransportPlan.id == event.object_id)
-        .execution_options(populate_existing=True)
+        select(TransportPlan).where(TransportPlan.id == event.object_id).execution_options(populate_existing=True)
     )
     if not plan or plan.status == "PUBLISHED":
         return
@@ -183,9 +179,7 @@ def _candidate_orders(db: Session, plan: TransportPlan, task: TransportTask | No
 
 def _cancel_execution_task(db: Session, event: OutboxEvent) -> None:
     plan = db.scalar(
-        select(TransportPlan)
-        .where(TransportPlan.id == event.object_id)
-        .execution_options(populate_existing=True)
+        select(TransportPlan).where(TransportPlan.id == event.object_id).execution_options(populate_existing=True)
     )
     if not plan or plan.status == "CANCELLED":
         return
@@ -326,9 +320,7 @@ def _warehouse_capacity_update(
 ) -> int:
     for attempt in range(5):
         warehouse = db.scalar(
-            select(Warehouse)
-            .where(Warehouse.id == warehouse_id)
-            .execution_options(populate_existing=True)
+            select(Warehouse).where(Warehouse.id == warehouse_id).execution_options(populate_existing=True)
         )
         if warehouse is None:
             raise RuntimeError("拼仓计划引用的仓库不存在")
@@ -375,10 +367,7 @@ def _reserve_warehouse_capacity(db: Session, event: OutboxEvent) -> None:
             db,
             plan.warehouse_id,
             {"reserved_m3": Warehouse.reserved_m3 + volume},
-            (
-                Warehouse.used_m3 + Warehouse.reserved_m3 + volume
-                <= Warehouse.capacity_m3 * WAREHOUSE_CAPACITY_LIMIT,
-            ),
+            (Warehouse.used_m3 + Warehouse.reserved_m3 + volume <= Warehouse.capacity_m3 * WAREHOUSE_CAPACITY_LIMIT,),
         )
     except BusinessError as exc:
         if exc.code != "STATE_GUARD_CONFLICT":
@@ -636,6 +625,29 @@ def _release_warehouse_capacity(db: Session, event: OutboxEvent) -> None:
 
 
 def _process_event(db: Session, event: OutboxEvent) -> None:
+    if event.topic == "dashboard.projection.refresh_requested":
+        refresh_all_dashboard_projections(db, commit=False)
+        notification_id = str(uuid5(UUID(event.event_id), "dashboard.snapshot.updated"))
+        existing = db.scalar(select(OutboxEvent).where(OutboxEvent.event_id == notification_id))
+        if existing is None:
+            db.add(
+                OutboxEvent(
+                    event_id=notification_id,
+                    topic="dashboard.snapshot.updated",
+                    object_type="dashboard_projection",
+                    object_id="public-dashboard",
+                    object_version=1,
+                    payload={
+                        "targets": ["public-dashboard", "e01-overview"],
+                        "kinds": event.payload.get("kinds", ["operations"]),
+                        "periods": ["7d", "30d", "month"],
+                    },
+                    status="PUBLISHED",
+                )
+            )
+        return
+    if event.topic == "dashboard.snapshot.updated":
+        return
     if project_operational_event(db, event):
         return
     if event.topic == "transport.plan.confirmed":
@@ -750,14 +762,6 @@ def _record_failure(event_id: str, error: Exception) -> None:
         db.commit()
 
 
-def _refresh_projection_after_commit() -> None:
-    with SessionLocal() as db:
-        try:
-            refresh_all_dashboard_projections(db)
-        except Exception:
-            db.rollback()
-
-
 def process_pending_once(limit: int = 100) -> int:
     processed = 0
     stale_before = utcnow() - CLAIM_TIMEOUT
@@ -792,6 +796,22 @@ def process_pending_once(limit: int = 100) -> int:
                 continue
             try:
                 _process_event(db, event)
+                if event.topic not in {"dashboard.snapshot.updated", "dashboard.projection.refresh_requested"}:
+                    refresh_id = str(uuid5(UUID(event.event_id), "dashboard.projection.refresh_requested"))
+                    if db.scalar(select(OutboxEvent).where(OutboxEvent.event_id == refresh_id)) is None:
+                        db.add(
+                            OutboxEvent(
+                                event_id=refresh_id,
+                                topic="dashboard.projection.refresh_requested",
+                                object_type="dashboard_projection",
+                                object_id="public-dashboard",
+                                object_version=1,
+                                payload={
+                                    "source_topic": event.topic,
+                                    "kinds": ["operations", "map", "algorithm_showcase"],
+                                },
+                            )
+                        )
                 published = db.execute(
                     update(OutboxEvent)
                     .where(
@@ -815,7 +835,6 @@ def process_pending_once(limit: int = 100) -> int:
                 db.rollback()
                 _record_failure(event_id, exc)
                 continue
-        _refresh_projection_after_commit()
     return processed
 
 

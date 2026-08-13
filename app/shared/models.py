@@ -206,7 +206,16 @@ class TransportOrder(Base, TimestampVersionMixin):
 
 class AlgorithmRun(Base):
     __tablename__ = "algorithm_runs"
-    __table_args__ = ({"schema": "b01"},)
+    __table_args__ = (
+        UniqueConstraint(
+            "algorithm_type",
+            "showcase_key",
+            "showcase_batch_key",
+            "input_signature",
+            name="uq_b01_algorithm_showcase_signature",
+        ),
+        {"schema": "b01"},
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     algorithm_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
@@ -215,6 +224,12 @@ class AlgorithmRun(Base):
     input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     output_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    showcase_key: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    showcase_batch_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_signature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    showcase_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    showcase_source_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -245,6 +260,43 @@ class DashboardProjection(Base, TimestampVersionMixin):
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="current")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DashboardMapPoint(Base, TimestampVersionMixin):
+    __tablename__ = "dashboard_map_points"
+    __table_args__ = (
+        UniqueConstraint("point_code", name="uq_b01_dashboard_map_point_code"),
+        CheckConstraint("longitude >= -180 AND longitude <= 180", name="ck_b01_map_point_longitude"),
+        CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_b01_map_point_latitude"),
+        Index("ix_b01_dashboard_map_point_order", "enabled", "featured", "display_order"),
+        {"schema": "b01"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    point_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("core.stores.id"), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    point_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    brand_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    address: Mapped[str] = mapped_column(String(240), nullable=False)
+    longitude: Mapped[float] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=False)
+    latitude: Mapped[float] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=False)
+    coordinate_crs: Mapped[str] = mapped_column(String(20), default="EPSG:4326", nullable=False)
+    coordinate_accuracy: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_longitude: Mapped[float | None] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=True)
+    source_latitude: Mapped[float | None] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=True)
+    source_crs: Mapped[str] = mapped_column(String(20), nullable=False)
+    conversion_method: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    featured: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    catalog_version: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    catalog_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class WarehousePoolPlan(Base, TimestampVersionMixin):
