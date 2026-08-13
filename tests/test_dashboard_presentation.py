@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -19,6 +20,7 @@ from app.shared.models import AlgorithmRun, DashboardMapPoint, OutboxEvent
 from scripts.generate_algorithm_showcase import generate
 from scripts.import_dashboard_map_catalog import import_catalog
 from scripts.validate_e02_catalogs import WEB_MAP_PATH, validate_algorithms, validate_geojson
+from scripts.validate_e02_catalogs import main as validate_catalogs_main
 from tests.conftest import login
 
 UUID_PATTERN = re.compile(
@@ -43,6 +45,12 @@ def test_e02_catalogs_geojson_and_algorithms_are_deterministic():
     assert len(geo["sha256"]) == 64
     algorithm = validate_algorithms()
     assert len(algorithm["scenarios"]) == 3
+
+
+def test_catalog_validator_accepts_explicit_geojson_path(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["validate_e02_catalogs", "--geojson", str(WEB_MAP_PATH)])
+    validate_catalogs_main()
+    assert '"feature_count"' in capsys.readouterr().out
 
 
 def test_map_catalog_import_is_idempotent_and_public_map_has_no_internal_identifiers():

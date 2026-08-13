@@ -111,10 +111,20 @@ def validate_algorithms() -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="校验 E02 正式目录、地图和预设算法输入")
-    parser.parse_args()
+    parser.add_argument(
+        "--geojson",
+        type=Path,
+        default=WEB_MAP_PATH,
+        help="长春服务范围 GeoJSON；独立服务器 release 必须显式传入网页制品中的文件",
+    )
+    args = parser.parse_args()
     print(
         json.dumps(
-            {"catalogs": validate_all_catalogs(), "geojson": validate_geojson(), "algorithms": validate_algorithms()},
+            {
+                "catalogs": validate_all_catalogs(),
+                "geojson": validate_geojson(args.geojson),
+                "algorithms": validate_algorithms(),
+            },
             ensure_ascii=False,
             indent=2,
         )
