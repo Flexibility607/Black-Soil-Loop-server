@@ -1989,7 +1989,10 @@ def _dashboard_payload(request: Request, snapshot: dict[str, Any], db: Session |
     cutoff = snapshot.pop("data_cutoff")
     metadata = dataset_metadata(request, db)
     if metadata["dataset_mode"] == "showcase" and isinstance(snapshot.get("map"), dict):
-        public_map = {**snapshot["map"], "active_routes": []}
+        public_map = {
+            key: value for key, value in snapshot["map"].items() if key not in {"stores", "routes"}
+        }
+        public_map["active_routes"] = []
         snapshot["map"] = public_map
     payload = api_payload(request, data_cutoff=cutoff, **metadata, **snapshot)
     payload.setdefault("data_cutoff", None)

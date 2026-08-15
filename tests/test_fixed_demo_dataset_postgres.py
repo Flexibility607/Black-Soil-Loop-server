@@ -73,7 +73,10 @@ def test_postgres_showcase_login_refresh_snapshot_and_mobile_websocket(monkeypat
         snapshot = client.get("/api/v1/public/dashboard/snapshot?period=7d")
         assert snapshot.status_code == 200
         assert snapshot.json()["dataset_mode"] == "showcase"
-        assert snapshot.json()["map"]["active_routes"] == []
+        public_map = snapshot.json()["map"]
+        assert public_map["active_routes"] == []
+        assert "stores" not in public_map
+        assert "routes" not in public_map
         csrf = client.cookies.get("blacksoil_csrf")
         refreshed = client.post(
             "/api/v1/web/auth/refresh",
