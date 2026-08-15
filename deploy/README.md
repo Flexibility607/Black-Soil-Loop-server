@@ -68,6 +68,12 @@ Nginx 的两个转写精确路径限制请求体并关闭请求缓冲，防止�
 
 预设场景明确属于测算展示，只会创建派生 AlgorithmRun 和 Outbox。命令不得创建真实运输订单、确认方案、预占仓库、发布任务或修改库存。回滚时先恢复 `legacy/false/false` 并刷新三周期投影；0013 保持向前，不执行生产 downgrade。
 
+## 固定演示数据库
+
+`deploy/provision-showcase.sh` 首次创建 `black_soil_loop_showcase`、四个专用角色、root-only 配置与凭据文件，并安装演示 Worker 和每日 03:05 恢复定时器。脚本拒绝覆盖既有 `/etc/black-soil-loop/showcase.env`。服务器后续 release 若检测到该文件，会通过 `deploy/migrate-showcase.sh` 独立升级演示数据库并重新应用专用授权。
+
+上线时必须先保持 `SHOWCASE_DATASET_ENABLED=false` 和 `PUBLIC_DASHBOARD_DATASET=live`，完成目录校验、案例安装、三周期投影与真实库不变性核验后再开启。回滚优先恢复 live/false 并停用演示 Worker 与定时器；迁移 `0014` 保持向前。完整步骤见 [固定演示案例运维手册](../../docs/fixed-demo-case-operations.md)。
+
 ## 验证
 
 ```bash

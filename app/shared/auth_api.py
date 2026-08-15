@@ -4,16 +4,44 @@ import hmac
 import secrets
 
 from fastapi import Request, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.shared.config import get_settings
-from app.shared.models import User
+from app.shared.errors import BusinessError
+from app.shared.models import DemoCaseInstallation, User
 from app.shared.responses import api_payload
-from app.shared.security import IssuedTokens, authenticate, issue_tokens, revoke_session, rotate_refresh_token
+from app.shared.security import (
+    IssuedTokens,
+    authenticate,
+    decode_token,
+    issue_tokens,
+    revoke_session,
+    rotate_refresh_token,
+)
+
+
+def dataset_metadata(request: Request, db: Session | None = None) -> dict[str, object | None]:
+    dataset_mode = getattr(request.state, "dataset_mode", "live")
+    case = getattr(request.state, "demo_case", None)
+    if dataset_mode == "showcase" and case is None and db is not None:
+        case = db.scalar(
+            select(DemoCaseInstallation).where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        )
+        if case is not None:
+            request.state.demo_case = case
+    return {
+        "dataset_mode": dataset_mode,
+        "dataset_label": "固定演示案例" if dataset_mode == "showcase" else None,
+        "case_version": case.catalog_version if case is not None else None,
+        "case_revision": case.case_revision if case is not None else None,
+        "case_refreshed_at": case.refreshed_at.isoformat() if case is not None else None,
+    }
 
 
 def _token_payload(request: Request, user: User, tokens: IssuedTokens, include_refresh: bool, csrf_token: str) -> dict:
     settings = get_settings()
+    metadata = dataset_metadata(request)
     return api_payload(
         request,
         access_token=tokens.access_token,
@@ -23,6 +51,7 @@ def _token_payload(request: Request, user: User, tokens: IssuedTokens, include_r
         refresh_expires_at=tokens.refresh_expires_at.isoformat(),
         idle_timeout_seconds=settings.idle_timeout_minutes * 60,
         csrf_token=csrf_token if not include_refresh else None,
+        **metadata,
         user={
             "id": user.id,
             "username": user.username,
@@ -42,8 +71,23 @@ def issue_user_tokens(
     user: User,
     *,
     include_refresh: bool,
+    dataset_mode: str = "live",
 ) -> dict:
-    tokens = issue_tokens(db, user)
+    case = None
+    if dataset_mode == "showcase":
+        case = db.scalar(
+            select(DemoCaseInstallation).where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        )
+        if case is None or case.state != "READY":
+            raise BusinessError("SHOWCASE_NOT_READY", "固定演示案例尚未就绪", status_code=503)
+        request.state.demo_case = case
+    request.state.dataset_mode = dataset_mode
+    tokens = issue_tokens(
+        db,
+        user,
+        dataset_mode=dataset_mode,
+        case_revision=case.case_revision if case is not None else None,
+    )
     settings = get_settings()
     csrf_token = secrets.token_urlsafe(24)
     response.set_cookie(
@@ -77,9 +121,17 @@ def login_user(
     password: str,
     *,
     include_refresh: bool,
+    dataset_mode: str = "live",
 ) -> dict:
     user = authenticate(db, username, password)
-    return issue_user_tokens(request, response, db, user, include_refresh=include_refresh)
+    return issue_user_tokens(
+        request,
+        response,
+        db,
+        user,
+        include_refresh=include_refresh,
+        dataset_mode=dataset_mode,
+    )
 
 
 def refresh_user(
@@ -100,6 +152,17 @@ def refresh_user(
         csrf_header = request.headers.get("X-CSRF-Token") or ""
         if not csrf_cookie or not hmac.compare_digest(csrf_cookie, csrf_header):
             raise BusinessError("CSRF_VALIDATION_FAILED", "刷新请求缺少有效的 CSRF 凭证", status_code=403)
+    token_payload = decode_token(raw_token, "refresh")
+    dataset_mode = str(token_payload.get("ds") or "live")
+    case = None
+    if dataset_mode == "showcase":
+        case = db.scalar(
+            select(DemoCaseInstallation).where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        )
+        if case is None or case.state != "READY" or token_payload.get("case_rev") != case.case_revision:
+            raise BusinessError("SHOWCASE_CASE_UPDATED", "固定演示案例已更新，请重新登录", status_code=401)
+        request.state.demo_case = case
+    request.state.dataset_mode = dataset_mode
     user, tokens = rotate_refresh_token(db, raw_token)
     settings = get_settings()
     csrf_token = secrets.token_urlsafe(24)

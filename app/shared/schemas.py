@@ -31,6 +31,10 @@ class RefreshRequest(ApiModel):
     refresh_token: str | None = None
 
 
+class DemoCaseResetRequest(ApiModel):
+    expected_case_revision: int = Field(ge=1)
+
+
 class TokenResponse(ApiModel):
     access_token: str
     refresh_token: str | None = None

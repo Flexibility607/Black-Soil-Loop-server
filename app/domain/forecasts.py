@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -102,11 +103,21 @@ def generate_next_week_forecasts(
     *,
     scheduled: bool = False,
     now: datetime | None = None,
+    enterprise_ids: set[str] | None = None,
+    product_ids: set[str] | None = None,
+    projection_id_factory: Callable[[Enterprise, Product, date], str] | None = None,
+    batch_id_factory: Callable[[date], str] | None = None,
 ) -> tuple[DemandForecastBatch, list[DemandForecastProjection], int]:
     forecast_start, forecast_end = next_week_window(now)
     as_of = forecast_start - timedelta(days=1)
-    enterprises = list(db.scalars(select(Enterprise).where(Enterprise.enabled.is_(True)).order_by(Enterprise.id)))
-    products = list(db.scalars(select(Product).order_by(Product.id)))
+    enterprise_query = select(Enterprise).where(Enterprise.enabled.is_(True))
+    if enterprise_ids is not None:
+        enterprise_query = enterprise_query.where(Enterprise.id.in_(enterprise_ids))
+    product_query = select(Product)
+    if product_ids is not None:
+        product_query = product_query.where(Product.id.in_(product_ids))
+    enterprises = list(db.scalars(enterprise_query.order_by(Enterprise.id)))
+    products = list(db.scalars(product_query.order_by(Product.id)))
     projections: list[DemandForecastProjection] = []
     changed = 0
     for enterprise in enterprises:
@@ -155,6 +166,11 @@ def generate_next_week_forecasts(
             )
             if projection is None:
                 projection = DemandForecastProjection(
+                    **(
+                        {"id": projection_id_factory(enterprise, product, forecast_start)}
+                        if projection_id_factory
+                        else {}
+                    ),
                     enterprise_id=enterprise.id,
                     product_id=product.id,
                     forecast_start=forecast_start,
@@ -250,7 +266,11 @@ def generate_next_week_forecasts(
         "scheduled": scheduled,
     }
     if batch is None:
-        batch = DemandForecastBatch(forecast_start=forecast_start, **batch_values)
+        batch = DemandForecastBatch(
+            **({"id": batch_id_factory(forecast_start)} if batch_id_factory else {}),
+            forecast_start=forecast_start,
+            **batch_values,
+        )
         db.add(batch)
         db.flush()
         changed += 1

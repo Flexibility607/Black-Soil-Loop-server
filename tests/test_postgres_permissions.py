@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 
@@ -97,3 +98,59 @@ def test_b01_b02_database_role_boundaries():
     b01.dispose()
     b02.dispose()
     worker.dispose()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("SHOWCASE_B01_DATABASE_URL", "").startswith("postgresql"),
+    reason="需要独立 PostgreSQL 演示数据库和角色",
+)
+def test_showcase_database_roles_are_isolated_from_live_database():
+    showcase_b01_url = make_url(os.environ["SHOWCASE_B01_DATABASE_URL"])
+    showcase_b02_url = make_url(os.environ["SHOWCASE_B02_DATABASE_URL"])
+    showcase_worker_url = make_url(os.environ["SHOWCASE_WORKER_DATABASE_URL"])
+    showcase_b01 = create_engine(showcase_b01_url)
+    showcase_b02 = create_engine(showcase_b02_url)
+    showcase_worker = create_engine(showcase_worker_url)
+
+    with showcase_b01.connect() as connection:
+        assert connection.scalar(text("SELECT current_database()")) == "black_soil_loop_showcase"
+        assert connection.scalar(text("SELECT count(*) FROM b01.transport_orders")) >= 0
+        with pytest.raises(DBAPIError):
+            connection.execute(text("SELECT count(*) FROM b02.transport_tasks"))
+        connection.rollback()
+        with pytest.raises(DBAPIError):
+            connection.execute(text("UPDATE b01.dashboard_map_points SET display_name = display_name"))
+        connection.rollback()
+
+    with showcase_b02.connect() as connection:
+        assert connection.scalar(text("SELECT current_database()")) == "black_soil_loop_showcase"
+        assert connection.scalar(text("SELECT count(*) FROM core.stores")) >= 0
+        assert connection.scalar(text("SELECT count(*) FROM b02.transport_tasks")) >= 0
+        with pytest.raises(DBAPIError):
+            connection.execute(text("SELECT count(*) FROM b01.algorithm_runs"))
+        connection.rollback()
+
+    with showcase_worker.connect() as connection:
+        assert connection.scalar(text("SELECT current_database()")) == "black_soil_loop_showcase"
+        assert connection.scalar(text("SELECT count(*) FROM integration.demo_case_installations")) >= 0
+        assert connection.scalar(
+            text(
+                "SELECT has_table_privilege(current_user, "
+                "'integration.demo_case_installations', 'INSERT,UPDATE,DELETE')"
+            )
+        )
+
+    for url in (showcase_b01_url, showcase_b02_url, showcase_worker_url):
+        forbidden_live = create_engine(url.set(database="black_soil_loop"))
+        with pytest.raises(DBAPIError), forbidden_live.connect():
+            pass
+        forbidden_live.dispose()
+
+    live_b01_url = make_url(os.environ["B01_DATABASE_URL"])
+    forbidden_showcase = create_engine(live_b01_url.set(database="black_soil_loop_showcase"))
+    with pytest.raises(DBAPIError), forbidden_showcase.connect():
+        pass
+    forbidden_showcase.dispose()
+    showcase_b01.dispose()
+    showcase_b02.dispose()
+    showcase_worker.dispose()

@@ -76,6 +76,30 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class DemoCaseInstallation(Base, TimestampVersionMixin):
+    __tablename__ = "demo_case_installations"
+    __table_args__ = (
+        UniqueConstraint("case_key", name="uq_integration_demo_case_key"),
+        CheckConstraint(
+            "state IN ('READY', 'REFRESHING', 'FAILED')",
+            name="ck_integration_demo_case_state",
+        ),
+        CheckConstraint("case_revision >= 1", name="ck_integration_demo_case_revision_positive"),
+        {"schema": "integration"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    case_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    catalog_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    catalog_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    anchor_date: Mapped[date] = mapped_column(Date, nullable=False)
+    state: Mapped[str] = mapped_column(String(20), default="READY", nullable=False, index=True)
+    case_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_reset_reason: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+
 class Enterprise(Base, TimestampVersionMixin):
     __tablename__ = "enterprises"
     __table_args__ = (UniqueConstraint("code", name="uq_core_enterprises_code"), {"schema": "core"})

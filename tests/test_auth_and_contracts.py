@@ -38,6 +38,8 @@ def test_openapi_contains_public_sse_mobile_ws_and_device_paths(b01_client, b02_
     assert "/api/v1/public/assistant/transcriptions" in b01_paths
     assert "/api/v1/web/transport/plans/{plan_id}/publish" in b01_paths
     assert "/api/v1/web/telemetry-issues" in b01_paths
+    assert "/api/v1/web/demo-case/status" in b01_paths
+    assert "/api/v1/web/demo-case/reset" in b01_paths
     assert "/api/v1/mobile/tasks/{task_id}/receipts" in b02_paths
     assert "/api/v1/device/telemetry" in b02_paths
 

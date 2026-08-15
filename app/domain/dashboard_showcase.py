@@ -465,7 +465,14 @@ def _procurement_case(db: Session) -> ShowcaseCase:
                     )
                     for item in options
                 ],
-                unit_conversion_warnings=row.unit_conversion_warnings,
+                unit_conversion_warnings=[
+                    {
+                        "quantity": warning.get("quantity", 0),
+                        "unit": str(warning.get("unit") or "名称待补充")[:20],
+                        "reason": str(warning.get("reason") or "单位换算待确认")[:240],
+                    }
+                    for warning in row.unit_conversion_warnings
+                ],
             ).model_dump(mode="json")
         )
         warnings += len(row.unit_conversion_warnings) + (0 if options else 1)

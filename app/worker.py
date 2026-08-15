@@ -9,12 +9,14 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.dashboard import refresh_all_dashboard_projections
+from app.domain.fixed_demo import materialize_fixed_demo_case, today_shanghai
 from app.domain.operations import project_operational_event
 from app.domain.services import add_audit, add_outbox, create_task_qr
 from app.shared.database import SessionLocal
 from app.shared.errors import BusinessError
 from app.shared.models import (
     DeadLetter,
+    DemoCaseInstallation,
     OutboxEvent,
     TaskEvent,
     TaskStop,
@@ -625,8 +627,30 @@ def _release_warehouse_capacity(db: Session, event: OutboxEvent) -> None:
 
 
 def _process_event(db: Session, event: OutboxEvent) -> None:
+    if event.topic == "demo.case.reset_requested":
+        materialize_fixed_demo_case(
+            db,
+            anchor_date=today_shanghai(),
+            reset_reason=str(event.payload.get("reset_reason") or "WEB_ADMIN")[:120],
+            expected_case_revision=int(event.payload["expected_case_revision"]),
+            force_reset=True,
+            require_process_role=True,
+            active_reset_event_id=event.event_id,
+        )
+        return
     if event.topic == "dashboard.projection.refresh_requested":
         refresh_all_dashboard_projections(db, commit=False)
+        if event.payload.get("mark_showcase_ready"):
+            installation = db.scalar(
+                select(DemoCaseInstallation).where(
+                    DemoCaseInstallation.case_key == event.payload.get("showcase_case_key")
+                )
+            )
+            expected_revision = int(event.payload.get("showcase_case_revision") or 0)
+            if installation is None or installation.case_revision != expected_revision:
+                raise RuntimeError("fixed demo case revision changed before projection refresh")
+            installation.state = "READY"
+            installation.refreshed_at = utcnow()
         notification_id = str(uuid5(UUID(event.event_id), "dashboard.snapshot.updated"))
         existing = db.scalar(select(OutboxEvent).where(OutboxEvent.event_id == notification_id))
         if existing is None:
@@ -748,6 +772,20 @@ def _record_failure(event_id: str, error: Exception) -> None:
         failed.claimed_at = None
         if failed.attempts >= 5:
             failed.status = "DEAD"
+            if failed.topic == "demo.case.reset_requested":
+                installation = db.get(DemoCaseInstallation, failed.object_id)
+                if installation is not None:
+                    installation.state = "FAILED"
+            elif failed.topic == "dashboard.projection.refresh_requested" and failed.payload.get(
+                "mark_showcase_ready"
+            ):
+                installation = db.scalar(
+                    select(DemoCaseInstallation).where(
+                        DemoCaseInstallation.case_key == failed.payload.get("showcase_case_key")
+                    )
+                )
+                if installation is not None:
+                    installation.state = "FAILED"
             db.add(
                 DeadLetter(
                     event_id=failed.event_id,
@@ -796,7 +834,11 @@ def process_pending_once(limit: int = 100) -> int:
                 continue
             try:
                 _process_event(db, event)
-                if event.topic not in {"dashboard.snapshot.updated", "dashboard.projection.refresh_requested"}:
+                if event.topic not in {
+                    "dashboard.snapshot.updated",
+                    "dashboard.projection.refresh_requested",
+                    "demo.case.reset_requested",
+                } and not event.payload.get("defer_dashboard_refresh"):
                     refresh_id = str(uuid5(UUID(event.event_id), "dashboard.projection.refresh_requested"))
                     if db.scalar(select(OutboxEvent).where(OutboxEvent.event_id == refresh_id)) is None:
                         db.add(

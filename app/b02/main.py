@@ -29,9 +29,15 @@ from app.domain.services import (
     sign_receipt,
     transition_task,
 )
-from app.shared.auth_api import issue_user_tokens, login_user, logout_user, refresh_user
+from app.shared.auth_api import dataset_metadata, issue_user_tokens, login_user, logout_user, refresh_user
 from app.shared.config import get_settings
-from app.shared.database import SessionLocal, engine, get_db, init_database
+from app.shared.database import (
+    engine,
+    get_db,
+    init_database,
+    session_for_dataset,
+    sessionmaker_for_dataset,
+)
 from app.shared.dependencies import get_current_user, require_roles
 from app.shared.dictionaries import (
     ALERT_STATUS_LABELS,
@@ -47,6 +53,7 @@ from app.shared.http import configure_app
 from app.shared.models import (
     Alert,
     Attachment,
+    DemoCaseInstallation,
     InventoryBalance,
     OutboxEvent,
     Receipt,
@@ -190,8 +197,19 @@ def health(request: Request, db: Session = Depends(get_db)) -> dict:
 
 
 @app.post(f"{MOBILE}/auth/login", tags=["移动鉴权"])
-def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
-    return login_user(request, response, db, payload.username, payload.password, include_refresh=True)
+def login(payload: LoginRequest, request: Request, response: Response) -> dict:
+    settings = get_settings()
+    dataset_mode = "showcase" if payload.username in settings.showcase_account_username_set else "live"
+    with session_for_dataset(dataset_mode) as db:
+        return login_user(
+            request,
+            response,
+            db,
+            payload.username,
+            payload.password,
+            include_refresh=True,
+            dataset_mode=dataset_mode,
+        )
 
 
 @app.post(f"{MOBILE}/auth/wechat", tags=["移动鉴权"])
@@ -232,8 +250,11 @@ def wechat_login(
 
 
 @app.post(f"{MOBILE}/auth/refresh", tags=["移动鉴权"])
-def refresh(payload: RefreshRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
-    return refresh_user(request, response, db, payload.refresh_token, include_refresh=True)
+def refresh(payload: RefreshRequest, request: Request, response: Response) -> dict:
+    raw_token = payload.refresh_token or request.cookies.get("blacksoil_refresh")
+    dataset_mode = str(decode_token(raw_token, "refresh").get("ds") or "live") if raw_token else "live"
+    with session_for_dataset(dataset_mode) as db:
+        return refresh_user(request, response, db, payload.refresh_token, include_refresh=True)
 
 
 @app.get(f"{MOBILE}/auth/me", tags=["移动鉴权"])
@@ -252,6 +273,7 @@ def me(request: Request, user: User = Depends(get_current_user)) -> dict:
             "object_version": user.object_version,
         },
         idle_timeout_seconds=get_settings().idle_timeout_minutes * 60,
+        **dataset_metadata(request),
     )
 
 
@@ -579,6 +601,16 @@ def _valid_image_signature(content_type: str, content: bytes) -> bool:
     return False
 
 
+def _upload_root(request: Request) -> Path:
+    settings = get_settings()
+    root = (
+        settings.showcase_upload_dir
+        if getattr(request.state, "dataset_mode", "live") == "showcase"
+        else settings.upload_dir
+    )
+    return Path(root).resolve()
+
+
 @app.post(f"{MOBILE}/uploads", status_code=201, tags=["附件"])
 async def upload_attachment(
     request: Request,
@@ -591,7 +623,7 @@ async def upload_attachment(
     suffix = ALLOWED_UPLOAD_TYPES.get(file.content_type or "")
     if suffix is None:
         raise BusinessError("UPLOAD_TYPE_NOT_ALLOWED", "只允许上传 JPG、PNG 或 WebP 图片", status_code=415)
-    upload_root = Path(settings.upload_dir).resolve()
+    upload_root = _upload_root(request)
     upload_root.mkdir(parents=True, exist_ok=True)
     storage_name = f"{uuid4().hex}{suffix}"
     target = (upload_root / storage_name).resolve()
@@ -643,6 +675,7 @@ async def upload_attachment(
 @app.get(f"{MOBILE}/uploads/{{attachment_id}}", tags=["附件"])
 def download_attachment(
     attachment_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FileResponse:
@@ -651,7 +684,7 @@ def download_attachment(
         raise BusinessError("ATTACHMENT_NOT_FOUND", "附件不存在", status_code=404)
     if user.role != "park_admin" and attachment.owner_user_id != user.id:
         raise BusinessError("FORBIDDEN", "无权读取该附件", status_code=403)
-    upload_root = Path(get_settings().upload_dir).resolve()
+    upload_root = _upload_root(request)
     target = (upload_root / attachment.storage_name).resolve()
     if target.parent != upload_root or not target.is_file():
         raise BusinessError("ATTACHMENT_FILE_MISSING", "附件文件缺失", status_code=404)
@@ -794,6 +827,13 @@ def websocket_session_error(db: Session, payload: dict[str, Any]) -> str | None:
         return "SESSION_REVOKED"
     if payload.get("ver") != user.session_version or session.session_version != user.session_version:
         return "SESSION_REPLACED"
+    dataset_mode = str(payload.get("ds") or "live")
+    if dataset_mode == "showcase":
+        case = db.scalar(
+            select(DemoCaseInstallation).where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        )
+        if case is None or case.state != "READY" or payload.get("case_rev") != case.case_revision:
+            return "SHOWCASE_CASE_UPDATED"
     try:
         if float(payload.get("exp")) <= now.timestamp():
             return "TOKEN_EXPIRED"
@@ -811,7 +851,9 @@ def websocket_session_error(db: Session, payload: dict[str, Any]) -> str | None:
 async def mobile_events(websocket: WebSocket, token: str, cursor: int = 0) -> None:
     try:
         payload = decode_token(token, "access")
-        with SessionLocal() as db:
+        dataset_mode = str(payload.get("ds") or "live")
+        event_sessionmaker = sessionmaker_for_dataset(dataset_mode)
+        with event_sessionmaker() as db:
             session_error = websocket_session_error(db, payload)
             if session_error:
                 await websocket.close(code=4401)
@@ -820,7 +862,7 @@ async def mobile_events(websocket: WebSocket, token: str, cursor: int = 0) -> No
         loop = asyncio.get_running_loop()
         last_session_check = loop.time()
         while True:
-            with SessionLocal() as db:
+            with event_sessionmaker() as db:
                 if loop.time() - last_session_check >= WS_SESSION_CHECK_INTERVAL_SECONDS:
                     session_error = websocket_session_error(db, payload)
                     last_session_check = loop.time()

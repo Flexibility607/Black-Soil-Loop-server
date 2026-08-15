@@ -20,7 +20,11 @@ def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         for schema in SCHEMAS:
-            op.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}" AUTHORIZATION blacksoil_owner')
+            # migrations/env.py has already selected the isolated owner role for
+            # the target dataset.  CURRENT_USER therefore resolves to
+            # blacksoil_owner for the live database and
+            # blacksoil_showcase_owner for the fixed showcase database.
+            op.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}" AUTHORIZATION CURRENT_USER')
     Base.metadata.create_all(bind=bind, checkfirst=True)
 
 

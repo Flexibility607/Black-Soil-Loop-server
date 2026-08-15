@@ -1,7 +1,7 @@
 [Unit]
-Description=Black Soil Loop B02 mobile fulfillment API
+Description=Black Soil Loop fixed showcase outbox and projection worker
 After=network-online.target postgresql.service
-Wants=network-online.target
+ConditionPathExists=/etc/black-soil-loop/showcase.env
 
 [Service]
 Type=simple
@@ -9,9 +9,10 @@ User=blacksoil
 Group=blacksoil
 WorkingDirectory=/srv/black-soil-loop/current
 EnvironmentFile=/etc/black-soil-loop/backend.env
-EnvironmentFile=-/etc/black-soil-loop/showcase.env
-Environment=SERVICE_ROLE=b02
-ExecStart=/srv/black-soil-loop/current/.venv/bin/uvicorn app.b02.main:app --host 127.0.0.1 --port 8102 --proxy-headers --forwarded-allow-ips=127.0.0.1
+EnvironmentFile=/etc/black-soil-loop/showcase.env
+Environment=SERVICE_ROLE=worker
+Environment=DATASET_ROLE=showcase
+ExecStart=/srv/black-soil-loop/current/.venv/bin/python -m app.worker
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

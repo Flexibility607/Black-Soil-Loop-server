@@ -171,6 +171,95 @@
         ]
       }
     },
+    "/api/v1/web/demo-case/status": {
+      "get": {
+        "tags": [
+          "固定演示案例"
+        ],
+        "summary": "Demo Case Status",
+        "operationId": "demo_case_status_api_v1_web_demo_case_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Demo Case Status Api V1 Web Demo Case Status Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/web/demo-case/reset": {
+      "post": {
+        "tags": [
+          "固定演示案例"
+        ],
+        "summary": "Reset Demo Case",
+        "operationId": "reset_demo_case_api_v1_web_demo_case_reset_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 100,
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoCaseResetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reset Demo Case Api V1 Web Demo Case Reset Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/web/master-data/{resource}": {
       "get": {
         "tags": [
@@ -2971,6 +3060,20 @@
           "reason"
         ],
         "title": "CancelRequest"
+      },
+      "DemoCaseResetRequest": {
+        "properties": {
+          "expected_case_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Case Revision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_case_revision"
+        ],
+        "title": "DemoCaseResetRequest"
       },
       "HTTPValidationError": {
         "properties": {

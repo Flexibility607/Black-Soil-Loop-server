@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -208,10 +209,16 @@ def _enterprise_product_input(
 def generate_procurement_aggregations(
     db: Session,
     cycle_start: date | None = None,
+    *,
+    product_ids: set[str] | None = None,
+    id_factory: Callable[[Product, date], str] | None = None,
 ) -> tuple[date, date, list[ProcurementAggregation]]:
     cycle_start, cycle_end = procurement_cycle(cycle_start)
     enterprises = list(db.scalars(select(Enterprise).where(Enterprise.enabled.is_(True)).order_by(Enterprise.id)))
-    products = list(db.scalars(select(Product).order_by(Product.id)))
+    product_query = select(Product)
+    if product_ids is not None:
+        product_query = product_query.where(Product.id.in_(product_ids))
+    products = list(db.scalars(product_query.order_by(Product.id)))
     results: list[ProcurementAggregation] = []
     for product in products:
         breakdown: list[dict[str, Any]] = []
@@ -253,6 +260,7 @@ def generate_procurement_aggregations(
         )
         if aggregation is None:
             aggregation = ProcurementAggregation(
+                **({"id": id_factory(product, cycle_start)} if id_factory else {}),
                 product_id=product.id,
                 cycle_start=cycle_start,
                 status="DRAFT",

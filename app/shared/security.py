@@ -82,7 +82,13 @@ def authenticate(db: Session, username: str, password: str) -> User:
     return user
 
 
-def issue_tokens(db: Session, user: User) -> IssuedTokens:
+def issue_tokens(
+    db: Session,
+    user: User,
+    *,
+    dataset_mode: str = "live",
+    case_revision: int | None = None,
+) -> IssuedTokens:
     settings = get_settings()
     now = utcnow()
     access_expires = now + timedelta(minutes=settings.access_token_minutes)
@@ -124,7 +130,15 @@ def issue_tokens(db: Session, user: User) -> IssuedTokens:
     db.add(session)
     db.flush()
 
-    common = {"sub": user.id, "sid": session.id, "ver": next_session_version, "iat": now}
+    common = {
+        "sub": user.id,
+        "sid": session.id,
+        "ver": next_session_version,
+        "iat": now,
+        "ds": dataset_mode,
+    }
+    if dataset_mode == "showcase":
+        common["case_rev"] = case_revision
     access_token = _encode({**common, "type": "access", "exp": access_expires})
     refresh_token = _encode({**common, "type": "refresh", "exp": refresh_expires, "nonce": secrets.token_hex(8)})
     session.refresh_token_hash = token_hash(refresh_token)
@@ -167,7 +181,14 @@ def rotate_refresh_token(db: Session, raw_refresh_token: str) -> tuple[User, Iss
     )
     if claimed.rowcount != 1:
         raise BusinessError("SESSION_INVALID", "会话已失效", status_code=401)
-    return user, issue_tokens(db, user)
+    dataset_mode = str(payload.get("ds") or "live")
+    case_revision = payload.get("case_rev") if dataset_mode == "showcase" else None
+    return user, issue_tokens(
+        db,
+        user,
+        dataset_mode=dataset_mode,
+        case_revision=case_revision,
+    )
 
 
 def revoke_session(db: Session, session_id: str) -> None:

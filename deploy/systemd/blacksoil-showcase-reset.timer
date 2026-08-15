@@ -1,0 +1,11 @@
+[Unit]
+Description=Restore the fixed showcase case every day at 03:05 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 03:05:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=0
+Unit=blacksoil-showcase-reset.service
+
+[Install]
+WantedBy=timers.target

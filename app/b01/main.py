@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime
 from typing import Annotated, Any
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -20,6 +21,7 @@ from app.domain.algorithms import forecast_demand, run_carpool, run_procurement,
 from app.domain.assistant import answer_data_question
 from app.domain.dashboard import read_dashboard_projection, refresh_dashboard_projection
 from app.domain.dashboard_information import public_information
+from app.domain.fixed_demo import read_fixed_demo_status
 from app.domain.forecasts import (
     forecast_projection_data,
     generate_next_week_forecasts,
@@ -37,9 +39,17 @@ from app.domain.procurement import (
 from app.domain.services import add_audit, add_outbox, load_idempotent, save_idempotent
 from app.domain.voice_limits import anonymous_subject_hash, claim_public_text_quota
 from app.domain.voice_service import cleanup_expired_voice_requests, transcribe_voice_request
-from app.shared.auth_api import login_user, logout_user, refresh_user
+from app.shared.auth_api import dataset_metadata, login_user, logout_user, refresh_user
 from app.shared.config import get_settings
-from app.shared.database import SessionLocal, engine, get_db, init_database
+from app.shared.database import (
+    SessionLocal,
+    ShowcaseSessionLocal,
+    engine,
+    get_db,
+    init_database,
+    session_for_dataset,
+    sessionmaker_for_dataset,
+)
 from app.shared.dependencies import get_current_user, require_roles
 from app.shared.dictionaries import (
     ALGORITHM_TYPE_LABELS,
@@ -59,6 +69,7 @@ from app.shared.models import (
     AlgorithmRun,
     DemandForecastBatch,
     DemandForecastProjection,
+    DemoCaseInstallation,
     Enterprise,
     InventoryMovementProjection,
     OutboxEvent,
@@ -86,6 +97,7 @@ from app.shared.responses import api_payload, page_payload
 from app.shared.schemas import (
     AssistantQuery,
     CancelRequest,
+    DemoCaseResetRequest,
     LoginRequest,
     MatchConfirmRequest,
     MatchPreviewRequest,
@@ -97,7 +109,7 @@ from app.shared.schemas import (
     VersionedRequest,
     WarehousePoolConfirmRequest,
 )
-from app.shared.security import as_utc
+from app.shared.security import as_utc, decode_token
 
 
 @asynccontextmanager
@@ -109,8 +121,12 @@ async def lifespan(_: FastAPI):
         while True:
             await asyncio.sleep(60)
             try:
-                with SessionLocal() as cleanup_db:
-                    cleanup_expired_voice_requests(cleanup_db)
+                sessionmakers = [SessionLocal]
+                if ShowcaseSessionLocal is not None:
+                    sessionmakers.append(ShowcaseSessionLocal)
+                for sessionmaker in sessionmakers:
+                    with sessionmaker() as cleanup_db:
+                        cleanup_expired_voice_requests(cleanup_db)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -149,13 +165,27 @@ def health(request: Request, db: Session = Depends(get_db)) -> dict:
 
 
 @app.post(f"{WEB}/auth/login", tags=["网页鉴权"])
-def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
-    return login_user(request, response, db, payload.username, payload.password, include_refresh=False)
+def login(payload: LoginRequest, request: Request, response: Response) -> dict:
+    settings = get_settings()
+    dataset_mode = "showcase" if payload.username in settings.showcase_account_username_set else "live"
+    with session_for_dataset(dataset_mode) as db:
+        return login_user(
+            request,
+            response,
+            db,
+            payload.username,
+            payload.password,
+            include_refresh=False,
+            dataset_mode=dataset_mode,
+        )
 
 
 @app.post(f"{WEB}/auth/refresh", tags=["网页鉴权"])
-def refresh(payload: RefreshRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
-    return refresh_user(request, response, db, payload.refresh_token, include_refresh=False)
+def refresh(payload: RefreshRequest, request: Request, response: Response) -> dict:
+    raw_token = payload.refresh_token or request.cookies.get("blacksoil_refresh")
+    dataset_mode = str(decode_token(raw_token, "refresh").get("ds") or "live") if raw_token else "live"
+    with session_for_dataset(dataset_mode) as db:
+        return refresh_user(request, response, db, payload.refresh_token, include_refresh=False)
 
 
 @app.get(f"{WEB}/auth/me", tags=["网页鉴权"])
@@ -167,6 +197,7 @@ def me(request: Request, user: User = Depends(get_current_user)) -> dict:
             ["id", "username", "display_name", "role", "enterprise_id", "store_id", "driver_id", "object_version"],
         ),
         idle_timeout_seconds=get_settings().idle_timeout_minutes * 60,
+        **dataset_metadata(request),
     )
 
 
@@ -178,6 +209,98 @@ def logout(
     _: User = Depends(get_current_user),
 ) -> dict:
     return logout_user(request, response, db)
+
+
+@app.get(f"{WEB}/demo-case/status", tags=["固定演示案例"])
+def demo_case_status(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    if getattr(request.state, "dataset_mode", "live") != "showcase":
+        raise BusinessError("FORBIDDEN", "当前账号无权访问固定演示案例", status_code=403)
+    status = read_fixed_demo_status(db, get_settings().showcase_case_key)
+    if status is None:
+        raise BusinessError("SHOWCASE_NOT_READY", "固定演示案例尚未就绪", status_code=503)
+    return api_payload(
+        request,
+        status=status["state"],
+        case_version=status["catalog_version"],
+        case_revision=status["case_revision"],
+        case_refreshed_at=status["refreshed_at"],
+    )
+
+
+@app.post(f"{WEB}/demo-case/reset", status_code=202, tags=["固定演示案例"])
+def reset_demo_case(
+    payload: DemoCaseResetRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=100)],
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles("park_admin")),
+) -> dict:
+    if getattr(request.state, "dataset_mode", "live") != "showcase":
+        raise BusinessError("FORBIDDEN", "当前账号无权恢复固定演示案例", status_code=403)
+    installation = db.scalar(
+        select(DemoCaseInstallation)
+        .where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        .with_for_update()
+    )
+    if installation is None:
+        raise BusinessError("SHOWCASE_RESET_UNAVAILABLE", "固定演示案例当前无法恢复", status_code=409)
+    if installation.case_revision != payload.expected_case_revision:
+        raise BusinessError("SHOWCASE_CASE_UPDATED", "固定演示案例已更新，请刷新状态后重试", status_code=409)
+    request_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
+    event_id = str(
+        uuid5(
+            UUID(installation.id),
+            f"demo.case.reset_requested:{installation.case_revision}:{request_hash}",
+        )
+    )
+    existing = db.scalar(select(OutboxEvent).where(OutboxEvent.event_id == event_id))
+    if existing is not None and existing.status in {"PENDING", "PROCESSING"}:
+        settings = get_settings()
+        response.delete_cookie("blacksoil_refresh", path="/api/v1", domain=settings.cookie_domain)
+        response.delete_cookie("blacksoil_csrf", path="/api/v1", domain=settings.cookie_domain)
+        return api_payload(
+            request,
+            status="REFRESHING",
+            case_version=installation.catalog_version,
+            case_revision=installation.case_revision,
+            case_refreshed_at=installation.refreshed_at.isoformat(),
+            session_invalidated=True,
+        )
+    if installation.state != "READY":
+        raise BusinessError("SHOWCASE_RESET_UNAVAILABLE", "固定演示案例当前无法恢复", status_code=409)
+    if existing is None:
+        db.add(
+            OutboxEvent(
+                event_id=event_id,
+                topic="demo.case.reset_requested",
+                object_type="demo_case_installation",
+                object_id=installation.id,
+                object_version=installation.object_version,
+                payload={
+                    "case_key": installation.case_key,
+                    "expected_case_revision": installation.case_revision,
+                    "reset_reason": f"WEB_ADMIN:{request_hash}",
+                },
+            )
+        )
+    installation.state = "REFRESHING"
+    db.commit()
+    settings = get_settings()
+    response.delete_cookie("blacksoil_refresh", path="/api/v1", domain=settings.cookie_domain)
+    response.delete_cookie("blacksoil_csrf", path="/api/v1", domain=settings.cookie_domain)
+    return api_payload(
+        request,
+        status="REFRESHING",
+        case_version=installation.catalog_version,
+        case_revision=installation.case_revision,
+        case_refreshed_at=installation.refreshed_at.isoformat(),
+        session_invalidated=True,
+    )
 
 
 @app.get(f"{WEB}/master-data/{{resource}}", tags=["主数据"])
@@ -1861,9 +1984,14 @@ def next_week_forecast_batch(
     )
 
 
-def _dashboard_payload(request: Request, snapshot: dict[str, Any]) -> dict[str, Any]:
+def _dashboard_payload(request: Request, snapshot: dict[str, Any], db: Session | None = None) -> dict[str, Any]:
+    snapshot = {**snapshot}
     cutoff = snapshot.pop("data_cutoff")
-    payload = api_payload(request, data_cutoff=cutoff, **snapshot)
+    metadata = dataset_metadata(request, db)
+    if metadata["dataset_mode"] == "showcase" and isinstance(snapshot.get("map"), dict):
+        public_map = {**snapshot["map"], "active_routes": []}
+        snapshot["map"] = public_map
+    payload = api_payload(request, data_cutoff=cutoff, **metadata, **snapshot)
     payload.setdefault("data_cutoff", None)
     if cutoff is None:
         payload["data_cutoff_note"] = "暂无可用于确定业务数据截止时间的记录"
@@ -1884,7 +2012,7 @@ def web_snapshot(
     )
     if snapshot is None:
         raise BusinessError("DASHBOARD_NOT_READY", "看板投影尚未生成", status_code=503)
-    return _dashboard_payload(request, snapshot)
+    return _dashboard_payload(request, snapshot, db)
 
 
 @app.get("/api/v1/public/dashboard/snapshot", tags=["公开大屏"])
@@ -1900,7 +2028,7 @@ def public_snapshot(
     )
     if snapshot is None:
         raise BusinessError("DASHBOARD_NOT_READY", "看板投影尚未生成", status_code=503)
-    return _dashboard_payload(request, snapshot)
+    return _dashboard_payload(request, snapshot, db)
 
 
 def _information_response(
@@ -2171,10 +2299,13 @@ async def dashboard_events(request: Request, cursor: int = Query(0, ge=0)) -> St
     if header_cursor and header_cursor.isdigit():
         cursor = max(cursor, int(header_cursor))
 
+    dataset_mode = get_settings().public_dashboard_dataset
+    event_sessionmaker = sessionmaker_for_dataset(dataset_mode)
+
     async def stream():
         nonlocal cursor
         while not await request.is_disconnected():
-            with SessionLocal() as db:
+            with event_sessionmaker() as db:
                 events = list(
                     db.scalars(
                         select(OutboxEvent)
@@ -2197,6 +2328,7 @@ async def dashboard_events(request: Request, cursor: int = Query(0, ge=0)) -> St
                         "kinds": event.payload.get("kinds", []),
                         "periods": event.payload.get("periods", []),
                         "created_at": event.created_at.isoformat(),
+                        "dataset_mode": dataset_mode,
                     }
                     serialized = json.dumps(body, ensure_ascii=False)
                     yield f"id: {event.sequence}\nevent: {event.topic}\ndata: {serialized}\n\n"

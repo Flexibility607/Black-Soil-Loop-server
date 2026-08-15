@@ -39,7 +39,12 @@ def run_migrations_online() -> None:
         if connection.dialect.name == "sqlite":
             connection = connection.execution_options(schema_translate_map={schema: None for schema in SCHEMAS})
         elif get_settings().service_role == "migration":
-            connection.execute(text("SET ROLE blacksoil_owner"))
+            owner_role = (
+                "blacksoil_showcase_owner"
+                if get_settings().dataset_role == "showcase"
+                else "blacksoil_owner"
+            )
+            connection.execute(text(f"SET ROLE {owner_role}"))
             connection.commit()
         context.configure(
             connection=connection,

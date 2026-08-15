@@ -1,0 +1,139 @@
+{
+  "case_key": "changchun-fixed-showcase-v1",
+  "case_name": "长春食品产业园协同履约固定案例",
+  "catalog_version": "2026-08-15.1",
+  "service_scope": "长春市及市郊",
+  "accounts": [
+    {"username": "showcase-admin", "display_name": "园区运营管理员", "role": "park_admin"},
+    {"username": "showcase-enterprise", "display_name": "企业协同管理员", "role": "enterprise_admin", "enterprise_code": "CC-ENT-01"},
+    {"username": "showcase-driver", "display_name": "冷链配送司机", "role": "driver", "driver_code": "CC-DRV-01"},
+    {"username": "showcase-store", "display_name": "传统门店操作员", "role": "store_manager", "store_code": "CC-ST-07"},
+    {"username": "showcase-third", "display_name": "第三空间操作员", "role": "third_space_manager", "store_code": "CC-ST-01"}
+  ],
+  "enterprises": [
+    {"code": "CC-ENT-01", "name": "长春麦香食品协同企业", "enabled": true},
+    {"code": "CC-ENT-02", "name": "净月冷链食品协同企业", "enabled": true},
+    {"code": "CC-ENT-03", "name": "松辽农品加工协同企业", "enabled": true},
+    {"code": "CC-ENT-04", "name": "北国乳品协同企业", "enabled": true},
+    {"code": "CC-ENT-05", "name": "吉味预制食品协同企业", "enabled": true},
+    {"code": "CC-ENT-06", "name": "园区设备维护企业", "enabled": false}
+  ],
+  "stores": [
+    {"code": "CC-ST-01", "enterprise_code": "CC-ENT-01", "name": "这有山第三空间", "channel": "THIRD_SPACE", "longitude": 125.3049, "latitude": 43.8727, "weight": 1.30},
+    {"code": "CC-ST-02", "enterprise_code": "CC-ENT-02", "name": "国信南山温泉第三空间", "channel": "THIRD_SPACE", "longitude": 125.5612, "latitude": 43.6132, "weight": 1.18},
+    {"code": "CC-ST-03", "enterprise_code": "CC-ENT-03", "name": "净月潭第三空间", "channel": "THIRD_SPACE", "longitude": 125.4777, "latitude": 43.7868, "weight": 1.12},
+    {"code": "CC-ST-04", "enterprise_code": "CC-ENT-04", "name": "南湖文化第三空间", "channel": "THIRD_SPACE", "longitude": 125.3168, "latitude": 43.8510, "weight": 1.04},
+    {"code": "CC-ST-05", "enterprise_code": "CC-ENT-05", "name": "北湖休闲第三空间", "channel": "THIRD_SPACE", "longitude": 125.4070, "latitude": 44.0180, "weight": 0.96},
+    {"code": "CC-ST-06", "enterprise_code": "CC-ENT-01", "name": "莲花山文旅第三空间", "channel": "THIRD_SPACE", "longitude": 125.5930, "latitude": 43.8260, "weight": 0.88},
+    {"code": "CC-ST-07", "enterprise_code": "CC-ENT-02", "name": "柏记水饺临河街店", "channel": "TRADITIONAL", "longitude": 125.3715, "latitude": 43.8578, "weight": 1.08},
+    {"code": "CC-ST-08", "enterprise_code": "CC-ENT-03", "name": "柏记水饺观塘店", "channel": "TRADITIONAL", "longitude": 125.4510, "latitude": 43.8435, "weight": 1.02},
+    {"code": "CC-ST-09", "enterprise_code": "CC-ENT-04", "name": "鹤记生煎富锦路店", "channel": "TRADITIONAL", "longitude": 125.3099, "latitude": 43.8709, "weight": 0.98},
+    {"code": "CC-ST-10", "enterprise_code": "CC-ENT-05", "name": "鹤记生煎欧亚万豪店", "channel": "TRADITIONAL", "longitude": 125.2910, "latitude": 43.8220, "weight": 0.94},
+    {"code": "CC-ST-11", "enterprise_code": "CC-ENT-01", "name": "大食味人民大街店", "channel": "TRADITIONAL", "longitude": 125.3500, "latitude": 43.8450, "weight": 0.90},
+    {"code": "CC-ST-12", "enterprise_code": "CC-ENT-02", "name": "园区优选宽城店", "channel": "TRADITIONAL", "longitude": 125.3370, "latitude": 43.9360, "weight": 0.86}
+  ],
+  "products": [
+    {"code": "CC-P-01", "name": "鲜肉水饺", "category": "速冻面点", "unit": "kg", "temperature_zone": "FROZEN"},
+    {"code": "CC-P-02", "name": "冷冻玉米", "category": "冷冻农品", "unit": "箱", "temperature_zone": "FROZEN"},
+    {"code": "CC-P-03", "name": "低温鲜奶", "category": "乳制品", "unit": "件", "temperature_zone": "CHILLED"},
+    {"code": "CC-P-04", "name": "即食酸奶", "category": "乳制品", "unit": "箱", "temperature_zone": "CHILLED"},
+    {"code": "CC-P-05", "name": "有机大米", "category": "粮油", "unit": "袋", "temperature_zone": "AMBIENT"},
+    {"code": "CC-P-06", "name": "非转基因豆油", "category": "粮油", "unit": "件", "temperature_zone": "AMBIENT"},
+    {"code": "CC-P-07", "name": "玉米面条", "category": "主食", "unit": "箱", "temperature_zone": "AMBIENT"},
+    {"code": "CC-P-08", "name": "冷藏调理肉", "category": "肉制品", "unit": "kg", "temperature_zone": "CHILLED"}
+  ],
+  "warehouses": [
+    {"code": "CC-WH-01", "enterprise_code": "CC-ENT-01", "name": "园区常温共享仓", "temperature_zone": "AMBIENT", "longitude": 125.2538, "latitude": 43.9940, "capacity_m3": 520, "used_m3": 286, "reserved_m3": 42},
+    {"code": "CC-WH-02", "enterprise_code": "CC-ENT-02", "name": "净月冷藏共享仓", "temperature_zone": "CHILLED", "longitude": 125.4350, "latitude": 43.8250, "capacity_m3": 360, "used_m3": 214, "reserved_m3": 38},
+    {"code": "CC-WH-03", "enterprise_code": "CC-ENT-03", "name": "北湖冷藏周转仓", "temperature_zone": "CHILLED", "longitude": 125.3920, "latitude": 44.0080, "capacity_m3": 240, "used_m3": 190, "reserved_m3": 18},
+    {"code": "CC-WH-04", "enterprise_code": "CC-ENT-04", "name": "园区冷冻共享仓", "temperature_zone": "FROZEN", "longitude": 125.2700, "latitude": 43.9800, "capacity_m3": 300, "used_m3": 165, "reserved_m3": 30}
+  ],
+  "suppliers": [
+    {"code": "CC-SUP-01", "name": "松辽优选供应商", "delivery_score": 94, "quality_score": 96},
+    {"code": "CC-SUP-02", "name": "长春稳供供应商", "delivery_score": 96, "quality_score": 93},
+    {"code": "CC-SUP-03", "name": "净月品质供应商", "delivery_score": 91, "quality_score": 98},
+    {"code": "CC-SUP-04", "name": "北湖协同供应商", "delivery_score": 92, "quality_score": 94}
+  ],
+  "fleet": [
+    {"driver_code": "CC-DRV-01", "driver_name": "冷链配送一组", "vehicle_label": "吉A·A1***", "temperature_zone": "CHILLED", "max_weight_kg": 5000, "max_volume_m3": 24, "enabled": true},
+    {"driver_code": "CC-DRV-02", "driver_name": "冷链配送二组", "vehicle_label": "吉A·A2***", "temperature_zone": "CHILLED", "max_weight_kg": 7000, "max_volume_m3": 30, "enabled": true},
+    {"driver_code": "CC-DRV-03", "driver_name": "冷冻配送一组", "vehicle_label": "吉A·B1***", "temperature_zone": "FROZEN", "max_weight_kg": 7000, "max_volume_m3": 28, "enabled": true},
+    {"driver_code": "CC-DRV-04", "driver_name": "常温配送一组", "vehicle_label": "吉A·C1***", "temperature_zone": "AMBIENT", "max_weight_kg": 9000, "max_volume_m3": 38, "enabled": true},
+    {"driver_code": "CC-DRV-05", "driver_name": "综合配送一组", "vehicle_label": "吉A·D1***", "temperature_zone": "AMBIENT", "max_weight_kg": 5000, "max_volume_m3": 22, "enabled": true},
+    {"driver_code": "CC-DRV-06", "driver_name": "车辆维护组", "vehicle_label": "吉A·M1***", "temperature_zone": "FROZEN", "max_weight_kg": 5000, "max_volume_m3": 20, "enabled": false}
+  ],
+  "daily_curve": [0.92, 0.96, 1.02, 1.08, 1.14, 1.22, 1.17, 0.95, 0.98, 1.04, 1.10, 1.16, 1.25, 1.20, 0.94, 0.99, 1.05, 1.12, 1.18, 1.28, 1.23, 0.96, 1.01, 1.07, 1.15, 1.21, 1.31, 1.26, 1.03, 1.11, 1.19],
+  "generation": {
+    "generator_version": "2026-08-15.1",
+    "supplier_pricing": {
+      "tier_minimums": [1.0, 500.0],
+      "first_tier_maximum": 499.99,
+      "base_unit_price": 4.8,
+      "product_price_step": 1.35,
+      "supplier_price_step": 0.18,
+      "tier_discount_step": 0.24,
+      "capacity_base": 12000,
+      "capacity_step": 1500,
+      "valid_days_before": 30,
+      "valid_days_after": 90
+    },
+    "rolling_business": {
+      "days": 31,
+      "origin_longitude": 125.2538,
+      "origin_latitude": 43.9940,
+      "quantity_bases": [62, 80],
+      "weight_bases_kg": [210, 305],
+      "volume_bases_m3": [1.8, 2.5],
+      "recent_confirmed_days": 3,
+      "third_space_sales_base": 1680,
+      "traditional_sales_base": 1320,
+      "average_order_value": 72,
+      "minimum_daily_orders": 8
+    },
+    "inventory": {
+      "product_count": 6,
+      "threshold_base": 22,
+      "threshold_step": 2,
+      "low_stock_count": 3,
+      "critical_stock_count": 2,
+      "low_stock_delta": 4,
+      "healthy_quantity_base": 70,
+      "healthy_store_step": 5,
+      "healthy_product_step": 3,
+      "stockout_statuses": ["SUBMITTED", "SUBMITTED", "SUBMITTED", "PROCESSING", "PROCESSING", "FULFILLED", "FULFILLED", "CANCELLED"],
+      "stockout_quantity_base": 18,
+      "stockout_quantity_step": 3,
+      "manual_movement_deltas": [-12, -12, -12, 5, 5, 5, 5, 5]
+    },
+    "fulfillment": {
+      "task_statuses": ["PUBLISHED", "DRIVER_ACCEPTED", "PICKED_UP", "IN_TRANSIT", "IN_TRANSIT", "DELIVERED", "COMPLETED", "CANCELLED"],
+      "task_weight_base_kg": 780,
+      "task_weight_step_kg": 120,
+      "task_volume_base_m3": 5.4,
+      "task_volume_step_m3": 0.8,
+      "location_age_minutes": [3, 6, 9, 18, 55],
+      "alert_states": ["OPEN", "OPEN", "ACKNOWLEDGED", "RESOLVED"],
+      "alert_types": ["HIGH_TEMPERATURE", "HIGH_HUMIDITY", "HIGH_TEMPERATURE", "HIGH_HUMIDITY"],
+      "telemetry_issue_types": ["TELEMETRY_ANOMALY", "TASK_STATUS_MISMATCH", "VEHICLE_MISMATCH", "DRIVER_MISMATCH"],
+      "receipt_statuses": ["FULL", "FULL", "PARTIAL", "PARTIAL", "REJECTED", "REJECTED"]
+    },
+    "planning": {
+      "forecast_enterprise_count": 3,
+      "product_count": 6,
+      "history_points_by_product": [24, 24, 8, 8, 0, 0],
+      "procurement_quantity_base": 540,
+      "procurement_quantity_step": 65,
+      "unit_warning_product_index": 1,
+      "confirmed_aggregation_count": 2,
+      "adjusted_aggregation_index": 2,
+      "adjustment_factor": 0.94,
+      "transport_plan_statuses": ["PUBLISHED", "CONFIRMED", "READY", "COMPLETED", "CANCELLED", "PUBLISHED"],
+      "warehouse_plan_statuses": ["RESERVED", "OCCUPIED", "RELEASED", "EXPIRED", "RESERVATION_REQUESTED"],
+      "reservation_statuses": ["RESERVED", "OCCUPIED", "RELEASED", "EXPIRED", "RESERVED"]
+    }
+  },
+  "attachments": [
+    {"purpose": "DELIVERY_HANDOVER", "file_name": "delivery-handover.txt", "sha256": "ec9a9b24700998fefb3ddf9e6affb3a6716420d54856293a4196bba3eb45e6e7"},
+    {"purpose": "RECEIPT_PROOF", "file_name": "receipt-proof.txt", "sha256": "2714f70d5fbf5492969e92be6dd11981d23d0ec3fc748bc1ba227f2d46617971"}
+  ]
+}

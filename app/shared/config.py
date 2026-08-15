@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     dashboard_map_mode: str = "legacy"
     algorithm_showcase_enabled: bool = False
     public_information_enabled: bool = False
+    showcase_dataset_enabled: bool = False
+    dataset_role: str = "live"
+    public_dashboard_dataset: str = "live"
+    showcase_database_url: str | None = None
+    showcase_b01_database_url: str | None = None
+    showcase_b02_database_url: str | None = None
+    showcase_worker_database_url: str | None = None
+    showcase_upload_dir: str = "/var/lib/black-soil-loop/showcase-uploads"
+    showcase_account_usernames: str = ""
+    showcase_case_key: str = "changchun-fixed-showcase-v1"
     map_location_delayed_minutes: int = 10
     map_location_stale_minutes: int = 30
 
@@ -81,6 +91,22 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"legacy", "changchun"}:
             raise ValueError("DASHBOARD_MAP_MODE 仅支持 legacy 或 changchun")
+        return normalized
+
+    @field_validator("public_dashboard_dataset")
+    @classmethod
+    def validate_public_dashboard_dataset(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"live", "showcase"}:
+            raise ValueError("PUBLIC_DASHBOARD_DATASET must be live or showcase")
+        return normalized
+
+    @field_validator("dataset_role")
+    @classmethod
+    def validate_dataset_role(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"live", "showcase"}:
+            raise ValueError("DATASET_ROLE must be live or showcase")
         return normalized
 
     @model_validator(mode="after")
@@ -139,6 +165,20 @@ class Settings(BaseSettings):
             "migration": self.worker_database_url,
         }
         return by_role.get(self.service_role) or self.database_url
+
+    @property
+    def effective_showcase_database_url(self) -> str | None:
+        by_role = {
+            "b01": self.showcase_b01_database_url,
+            "b02": self.showcase_b02_database_url,
+            "worker": self.showcase_worker_database_url,
+            "migration": self.showcase_worker_database_url,
+        }
+        return by_role.get(self.service_role) or self.showcase_database_url
+
+    @property
+    def showcase_account_username_set(self) -> set[str]:
+        return {part.strip() for part in self.showcase_account_usernames.split(",") if part.strip()}
 
 
 @lru_cache

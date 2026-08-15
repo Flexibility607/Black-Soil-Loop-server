@@ -44,9 +44,18 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -f "$RELEASE_DIR/deploy/postgres/
     .venv/bin/alembic -c alembic.ini upgrade head
 )
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -f "$RELEASE_DIR/deploy/postgres/02-grant-permissions.sql"
+if [[ -f /etc/black-soil-loop/showcase.env ]]; then
+  "$RELEASE_DIR/deploy/migrate-showcase.sh" "$RELEASE_DIR"
+fi
 
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 systemctl restart blacksoil-b01.service blacksoil-b02.service blacksoil-worker.service
+if [[ -f /etc/black-soil-loop/showcase.env ]] && grep -Eq '^SHOWCASE_DATASET_ENABLED=(true|1|yes)$' /etc/black-soil-loop/showcase.env; then
+  systemctl restart blacksoil-showcase-worker.service
+  systemctl is-active --quiet blacksoil-showcase-worker.service
+else
+  systemctl stop blacksoil-showcase-worker.service >/dev/null 2>&1 || true
+fi
 
 HEALTHY=false
 for _ in $(seq 1 30); do

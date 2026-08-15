@@ -96,6 +96,10 @@ python -m scripts.generate_algorithm_showcase --check --batch-key e02-changchun-
 
 GitHub Actions 使用 PostgreSQL 16，从空库连续执行两次 Alembic 升级，并验证 B01/B02 数据库角色边界。SQLite 只用于快速本地单元测试。
 
+## 固定演示数据集
+
+迁移 `20260814_0014` 为独立演示数据库增加案例安装元数据。演示数据必须通过 `scripts.manage_fixed_demo_case` 写入精确命名的 `black_soil_loop_showcase`，命令会同时校验 `DATASET_ROLE=showcase` 和当前数据库名；不得向真实库导入案例，也不得在生产运行 `app.seed --reset`。公开 E02、受控演示账号、签名令牌、演示 Worker 和每日恢复任务的完整安装与回滚步骤见 [固定演示案例运维手册](../docs/fixed-demo-case-operations.md)。
+
 ## 发布边界
 
 - `deploy/` 只写入 `/srv/black-soil-loop*`、`/var/lib/black-soil-loop`、`/etc/black-soil-loop` 和独立 Nginx 站点文件。

@@ -5,12 +5,13 @@ from datetime import timedelta
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.shared.config import get_settings
 from app.shared.database import get_db
 from app.shared.errors import BusinessError
-from app.shared.models import User, UserSession, utcnow
+from app.shared.models import DemoCaseInstallation, User, UserSession, utcnow
 from app.shared.security import as_utc, decode_token
 
 bearer = HTTPBearer(auto_error=False)
@@ -24,6 +25,16 @@ def get_current_user(
     if credentials is None:
         raise BusinessError("AUTH_REQUIRED", "请先登录", status_code=401)
     payload = decode_token(credentials.credentials, "access")
+    dataset_mode = str(payload.get("ds") or "live")
+    if dataset_mode != getattr(request.state, "dataset_mode", "live"):
+        raise BusinessError("DATASET_TOKEN_MISMATCH", "登录数据集无效", status_code=401)
+    if dataset_mode == "showcase":
+        case = db.scalar(
+            select(DemoCaseInstallation).where(DemoCaseInstallation.case_key == get_settings().showcase_case_key)
+        )
+        if case is None or case.state != "READY" or payload.get("case_rev") != case.case_revision:
+            raise BusinessError("SHOWCASE_CASE_UPDATED", "固定演示案例已更新，请重新登录", status_code=401)
+        request.state.demo_case = case
     user = db.get(User, payload.get("sub"))
     session = db.get(UserSession, payload.get("sid"))
     if not user or not user.active or not session or session.revoked_at is not None:

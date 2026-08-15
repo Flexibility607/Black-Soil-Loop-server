@@ -1,0 +1,20 @@
+[Unit]
+Description=Restore the Black Soil Loop fixed showcase case
+After=postgresql.service blacksoil-showcase-worker.service
+ConditionPathExists=/etc/black-soil-loop/showcase.env
+
+[Service]
+Type=oneshot
+User=blacksoil
+Group=blacksoil
+WorkingDirectory=/srv/black-soil-loop/current
+EnvironmentFile=/etc/black-soil-loop/backend.env
+EnvironmentFile=/etc/black-soil-loop/showcase.env
+Environment=SERVICE_ROLE=worker
+Environment=DATASET_ROLE=showcase
+ExecStart=/srv/black-soil-loop/current/.venv/bin/python -m app.showcase_scheduler
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/black-soil-loop
