@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
-import shutil
+import tempfile
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
@@ -1451,7 +1452,22 @@ def _install_attachments(
             raise RuntimeError("controlled attachment target is outside upload directory")
         if hashlib.sha256(source.read_bytes()).hexdigest() != item.sha256:
             raise RuntimeError(f"controlled attachment hash mismatch: {item.file_name}")
-        shutil.copyfile(source, target)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=upload_root,
+                prefix=f".{storage_name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary.write(source.read_bytes())
+                temporary_path = Path(temporary.name)
+            temporary_path.chmod(0o644)
+            os.replace(temporary_path, target)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         db.add(
             Attachment(
                 id=stable_id(catalog.case_key, "attachment", item.purpose),
@@ -1543,6 +1559,15 @@ def materialize_fixed_demo_case(
             )
         db.execute(
             unsettled_events
+            .values(status="SUPERSEDED", claimed_by=None, claimed_at=None)
+            .execution_options(synchronize_session=False)
+        )
+        db.execute(
+            update(OutboxEvent)
+            .where(
+                OutboxEvent.status == "DEAD",
+                OutboxEvent.topic == "demo.case.reset_requested",
+            )
             .values(status="SUPERSEDED", claimed_by=None, claimed_at=None)
             .execution_options(synchronize_session=False)
         )
