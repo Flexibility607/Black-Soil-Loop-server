@@ -402,7 +402,8 @@ def guard_showcase_database(db: Session, *, require_process_role: bool) -> None:
         raise RuntimeError("DATASET_ROLE must be showcase")
     if db.get_bind().dialect.name == "postgresql" and database_name != "black_soil_loop_showcase":
         raise RuntimeError("fixed demo case may only write black_soil_loop_showcase")
-    if db.get_bind().dialect.name != "postgresql" and "showcase" not in database_name.lower():
+    database_file_name = Path(database_name).name.lower()
+    if db.get_bind().dialect.name != "postgresql" and "showcase" not in database_file_name:
         raise RuntimeError("fixed demo tests require an explicitly named showcase database")
 
 
